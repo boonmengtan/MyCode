@@ -21,7 +21,6 @@
   font-size: 20px; /* adjust as desired */
 }
 
-
   :root{
     --bg: #0b0e12;
     --gauge-size: 280px;
@@ -326,7 +325,6 @@
   .wave-bar:nth-child(38) { animation-delay: 0.7s; }
   .wave-bar:nth-child(39) { animation-delay: 0.8s; }
   .wave-bar:nth-child(40) { animation-delay: 0.9s; }
-
 
   .stat-change {
     font-size: 14px;
@@ -671,6 +669,8 @@
   }
 
   .achievement-badge {
+  font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",system-ui,sans-serif !important;
+  text-transform:none !important;
     background: rgba(255,255,255,0.1);
     padding: 4px 8px;
     border-radius: 12px;
@@ -877,13 +877,11 @@
     .header-car { width: 100px; height: 28px; }
   }
 
-
   .trophy-icon {
     display: block;
     margin: 0 auto;
     object-fit: contain;
   }
-
 
   .gold-plinth {
     display: flex;
@@ -961,7 +959,37 @@
     height: 100%;
   }
 
-</style>
+/* --- overlap fix for last mini chart --- */
+.live-widgets{ margin-bottom:24px; }
+.live-card{ overflow:hidden; }
+.live-table{ position:relative; z-index:2; margin-top:8px; }
+
+/* Ticker */
+  color: #cfe3ff;
+}
+.live-table th:nth-child(2), .live-table td:nth-child(2) { /* Qty */
+  color: #8ab4ff;
+}
+.live-table th:nth-child(3), .live-table td:nth-child(3) { /* Avg Cost */
+  color: #ffcf66;
+}
+.live-table th:nth-child(4), .live-table td:nth-child(4) { /* Last */
+  color: #7ee0ff;
+}
+/* For P/L $ and P/L %, keep dynamic green/red via .live-pl-pos / .live-pl-neg */
+
+/* Icon on 'F1 Grand Prix Circuit' header */
+.section-title .circuit-icon{
+  height: 48px;
+  width: auto;
+  margin-right: 12px;
+  vertical-align: middle;
+  border-radius: 4px;
+  opacity: .95;
+}
+
+
+body { padding-bottom: 48px; }</style>
 <style>
 .f1-modal-overlay {
   position: fixed;
@@ -1051,8 +1079,419 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 <style>
 /* Hide header telemetry card UI but keep logic active */
 
-</style></head>
+</style>
+<style>
+.live-section{margin:24px 0}
+.live-controls{display:flex;gap:10px;align-items:center;margin:10px 0 15px;flex-wrap:wrap}
+.live-controls input[type="text"]{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px 10px;color:inherit;min-width:260px}
+.live-controls button{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px 12px;cursor:pointer;color:inherit}
+.live-status{opacity:.85;font-size:13px}
+.live-summary{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px}
+.kpi{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px 14px;min-width:180px}
+.live-widgets{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin:10px 0 16px}
+.live-card{height:160px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:4px;overflow:hidden}
+.live-card .tradingview-widget-container__widget{height:100%!important}
+.live-table-wrap{overflow-x:auto}
+.live-table{width:100%;border-collapse:collapse;font-size:14px}
+.live-table th,.live-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.2);text-align:right}
+.live-table th:first-child,.live-table td:first-child{text-align:left}
+.live-pl-pos{color:#1aa65b}.live-pl-neg{color:#cc2e2e}.live-empty{opacity:.7;font-style:italic;padding:8px 0}
+</style>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+/** === Debrief + Tiles Shim (accepts FULL schema JSON) === */
+function coerceToDebriefSummary(m){
+  const perf = m.performance ?? {
+    totalReturn: m.ROI ?? null,
+    CAGR: m.CAGR ?? null,
+    maxDD: m.MaxDrawdown ?? null,
+    Sharpe: m.Sharpe ?? null,
+    Sortino: null, volatility: null, calmar: null, recoveryDays: null,
+    startDate: null, endDate: null, days: m.Days ?? null,
+  };
+  const trip = m.tripStats ?? {
+    n: m.TripCount ?? null,
+    wins: m.Wins ?? null,
+    losses: m.Losses ?? null,
+    winRate: (m.WinRate ?? null),
+    profitFactor: (m.ProfitFactor ?? null),
+    avgWin: m.avgWin ?? null,
+    avgLoss: m.avgLoss ?? null,
+    payoff: m.payoff ?? null,
+    expectancy: m.expectancy ?? null,
+    medianHold: m.medianHold ?? null,
+    maxConsecWins: m.maxConsecWins ?? null,
+    maxConsecLosses: m.maxConsecLosses ?? null
+  };
+  return {
+    meta: m.meta ?? { file: "", basis: "" },
+    counts: m.counts ?? { openTrips: m.OpenPositions ?? 0, closedTrips: m.TripCount ?? 0 },
+    totals: m.totals ?? { sumPos: m.SumPos ?? 0, sumAbsNeg: m.SumAbsNeg ?? 0, netPnl: null },
+    performance: perf,
+    tripStats: trip,
+    strategyStats: m.strategyStats ?? [],
+    pnlByUnderlying: m.pnlByUnderlying ?? {},
+    topUnderlying: m.topUnderlying ?? [],
+    timing: m.timing ?? { byEntryDOW: [], byMonth: [], byHoldBucket: [] },
+    fees: m.fees ?? {},
+    marketContext: m.marketContext ?? {},
+    equityCurvePreview: m.equityCurvePreview ?? { head: [], tail: [] }
+  };
+}
+
+function tilesFromSummary(m){
+  return {
+    WinRate:       m.WinRate       ?? m.tripStats?.winRate       ?? 0,
+    ProfitFactor:  m.ProfitFactor  ?? m.tripStats?.profitFactor  ?? 0,
+    OpenTrades:    m.OpenPositions ?? m.counts?.openTrips        ?? m.counts?.open ?? 0,
+    MaxDrawdown:   m.MaxDrawdown   ?? m.performance?.maxDD       ?? 0,
+    CAGR:          m.CAGR          ?? m.performance?.cagr        ?? m.performance?.CAGR ?? 0,
+    Sharpe:        m.performance?.Sharpe ?? m.Sharpe ?? m.performance?.sharpe_event ?? 0,
+    ROI:           m.ROI           ?? m.performance?.totalReturn ?? 0
+  };
+}
+
+function applyMetricsAndSummary(m){
+  try{
+    // 1) Update tiles/gauges
+    const t = tilesFromSummary(m);
+    if (typeof updateDashboardMetrics === 'function') {
+      updateDashboardMetrics(t);
+    } else {
+      const pct = x => (x==null ? 'â€”' : (x*100).toFixed(1) + '%');
+      const n2  = x => (x==null ? 'â€”' : Number(x).toFixed(2));
+      const n0  = x => (x==null ? 'â€”' : String(x));
+      (document.getElementById('win-rate-value')||{}).textContent = pct(t.WinRate);
+      (document.getElementById('drs-value')||{}).textContent = n2(t.ProfitFactor);
+      (document.getElementById('pole-positions-value')||{}).textContent = n0(t.OpenTrades);
+      (document.getElementById('breakdown-value')||{}).textContent = pct(t.MaxDrawdown);
+      (document.getElementById('cagr-gauge-value')||{}).textContent = pct(t.CAGR);
+      (document.getElementById('sharpe-gauge-value')||{}).textContent = n2(t.Sharpe);
+      (document.getElementById('roi-gauge-value')||{}).textContent = pct(t.ROI);
+    }
+    // 2) Debrief payload
+    window.DEBRIEF_SUMMARY = coerceToDebriefSummary(m);
+    // 3) Status
+    const statusEl = document.getElementById('debriefStatus') || document.getElementById('debrief-status');
+    if (statusEl){ statusEl.style.display='block'; statusEl.textContent = 'Debrief ready.'; }
+    console.log('[F1] Debrief summary set from JSON.');
+  }catch(e){
+    console.error('[F1] applyMetricsAndSummary error:', e);
+    alert('Failed to apply metrics from JSON: ' + e.message);
+  }
+}
+</script>
+<style>
+
+/* --- F1 Table Only width tuning --- */
+#f1TableOnly{
+  width: min(1100px, 92vw);
+  margin: 26px auto 36px !important; /* center horizontally */
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+#f1TableOnly .wrap{
+  width: 100%;
+  overflow-x: auto;
+}
+
+</style>
+<style>
+/* Hide vertical scrollbar but keep scrolling */
+html, body {
+  -ms-overflow-style: none;  /* IE 10+ */
+  scrollbar-width: none;     /* Firefox */
+  overflow-y: auto;          /* Ensure scrolling still works */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none;             /* Safari and Chrome */
+}
+</style>
+<style id="fixed-header-patch">
+/* --- Fixed header patch (non-destructive) --- */
+.dashboard-header {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2000;
+  /* Keep existing background/border styles from the file */
+}
+/* Ensure the header content keeps its centered layout and full-bleed background */
+.dashboard-header .header-content { max-width: 1600px; margin: 0 auto; padding: 0 20px; }
+/* When fixed headers are used, make sure any dropdowns/menus render above content */
+header, .dashboard-header, .header-content { transform: translateZ(0); will-change: transform; }
+</style>
+
+
+<style id="fixed-header-image-visibility">
+/* Keep header images visible above content after making header fixed */
+.dashboard-header{ z-index:3000 !important; overflow:visible !important; }
+#F1_logo, .F1_logo, .f1-logo,
+#F1_Car_mini, .F1_Car_mini{
+  position: relative !important;
+  z-index: 3100 !important;
+  display: inline-block !important;
+  height: auto;
+  max-height: 56px; /* respect existing layout; adjust if needed */
+  object-fit: contain;
+  vertical-align: middle;
+}
+/* Guard against accidental opacity or filters applied elsewhere */
+#F1_logo img, .F1_logo img, .f1-logo img,
+#F1_Car_mini img, .F1_Car_mini img{
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+</style>
+
+
+<style id="fixed-header-solid-bg">
+/* Remove transparency from header background */
+.dashboard-header{
+  background: var(--panel-bg, #0b0d12) !important; /* solid fallback if var not defined */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+</style>
+
+<style>
+
+/* --- Unrealized P/L Mini Card --- */
+.mini-pl-row {
+  display:flex; align-items:center; gap:12px; margin:8px 0 12px;
+}
+.mini-pl-card {
+  display:flex; flex-direction:column; justify-content:center;
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px; padding:12px 16px; min-width:260px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.35);
+}
+.mini-pl-card .mini-pl-label {
+  font-size:12px; color:#c7d0df; text-transform:uppercase; letter-spacing:1px;
+}
+.mini-pl-card .mini-pl-value {
+  font-size:28px; font-weight:600; margin-top:4px;
+}
+.mini-pl-pos { color:#1aa65b; }
+.mini-pl-neg { color:#cc2e2e; }
+
+</style>
+<style>
+
+/* Title icon for F1 Live header */
+.f1-title-icon{
+  height:28px;
+  width:auto;
+  display:inline-block;
+  vertical-align:middle;
+  margin-right:10px;
+}
+#f1TableOnly .hdr{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+#f1TableOnly .hdr h2{ margin:0; }
+
+</style>
+
+<style>
+/* 2x enlarge for F1 title icon */
+.f1-title-icon{ height:56px; }
+</style>
+
+<style>
+
+/* Push content below the fixed header */
+.header-spacer { height: 96px; } /* tweak if header grows/shrinks */
+.main-container { padding-top: 8px; } /* small breathing room */
+@media (max-width: 900px){ .header-spacer{ height: 112px; } }
+
+</style>
+<style>
+
+/* === Edge-safe padding for Performance Metrics === */
+.stats-overview,
+.gauges-section {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+/* Increase spacing between stat cards and between gauges */
+.stats-overview { gap: 20px; }
+.gauges-grid   { gap: 24px; }
+
+/* Ensure the first/last items don't cling to the edges on very wide screens */
+@media (min-width: 1400px){
+  .stats-overview,
+  .gauges-section { padding-left: 32px; padding-right: 32px; }
+}
+
+/* On small screens give a touch more breathing room */
+@media (max-width: 640px){
+  .stats-overview,
+  .gauges-section { padding-left: 16px; padding-right: 16px; }
+}
+
+</style>
+<style>
+
+/* ==== Full-bleed Equity Curve (spans viewport width) ==== */
+.chart-panel.full-bleed{
+  position: relative;
+  width: 100vw;
+  left: 50%;
+  right: 50%;
+  margin-left: calc(-50vw + 0px);
+  margin-right: calc(-50vw + 0px);
+  border-radius: 18px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.chart-panel.full-bleed svg,
+.chart-panel.full-bleed canvas,
+.chart-panel.full-bleed .chart{
+  width: 100% !important;
+  height: auto;
+}
+/* Prevent the full-bleed panel from hugging the absolute edges on ultra-wide screens */
+@media (min-width: 1600px){
+  .chart-panel.full-bleed{ padding-left: 24px; padding-right: 24px; }
+}
+
+</style>
+
+<style>
+/* Prevent overlap between full-bleed equity chart and next section */
+.chart-panel.full-bleed{
+  overflow: hidden;           /* contain the chart visuals */
+  margin-bottom: 72px;        /* extra separation below the chart */
+}
+#f1TableOnly{
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;            /* small breathing room */
+  clear: both;
+}
+/* Ensure chart stays behind neighboring elements */
+.chart-panel.full-bleed{ z-index: 0; }
+</style>
+
+
+<style>
+/* Limit full-bleed equity chart height for better fit */
+.chart-panel.full-bleed{
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+.chart-panel.full-bleed svg,
+.chart-panel.full-bleed canvas,
+.chart-panel.full-bleed .chart{
+  height: min(56vh, 520px) !important;  /* cap height to keep chart fully visible */
+  max-height: min(56vh, 520px) !important;
+}
+@media (max-height: 800px){
+  .chart-panel.full-bleed svg,
+  .chart-panel.full-bleed canvas,
+  .chart-panel.full-bleed .chart{ height: 48vh !important; }
+}
+@media (max-width: 768px){
+  .chart-panel.full-bleed svg,
+  .chart-panel.full-bleed canvas,
+  .chart-panel.full-bleed .chart{ height: 45vh !important; }
+}
+</style>
+
+
+<style>
+/* Show X-axis labels for full-bleed chart */
+.chart-panel.full-bleed{
+  overflow: visible;           /* let tick labels render outside inner plot if needed */
+  padding-bottom: 28px;        /* room for rotated/large tick labels */
+  margin-bottom: 72px;         /* keep separation to F1 Live */
+  z-index: 0;
+}
+/* Give the SVG a bit more headroom to include axes within bounds */
+.chart-panel.full-bleed svg,
+.chart-panel.full-bleed canvas,
+.chart-panel.full-bleed .chart{
+  height: min(60vh, 560px) !important;
+  max-height: min(60vh, 560px) !important;
+}
+</style>
+
+
+<style>
+/* Extra separation to avoid overlap with F1 Live panel */
+.chart-panel.full-bleed{
+  margin-bottom: 120px !important;  /* was 72px */
+  padding-bottom: 32px;              /* ensure axis labels have room */
+  z-index: 0;                        /* keep behind following sections */
+}
+#f1TableOnly{
+  position: relative;
+  z-index: 2;
+  margin-top: 24px;                  /* add breathing room above the panel */
+  clear: both;
+}
+</style>
+
+
+<style>
+/* Even more separation below the equity chart */
+.chart-panel.full-bleed{
+  margin-bottom: 160px !important;  /* increased from 120px */
+}
+#f1TableOnly{
+  margin-top: 32px;                 /* increased from 24px */
+}
+
+/* Small screens: keep generous spacing too */
+@media (max-width: 900px){
+  .chart-panel.full-bleed{ margin-bottom: 180px !important; }
+  #f1TableOnly{ margin-top: 36px; }
+}
+</style>
+
+</head>
 <body>
+<script>
+// ==== Global TradingView symbol helpers (loaded early) ====
+(function(){
+  function sanitizeTicker(raw){
+    if (!raw) return '';
+    var t = String(raw).toUpperCase();
+    t = t.replace(/[^A-Z0-9:_-]/g, '');
+    t = t.replace(/\.(US|U|SW|LN|HK|SG|JP|DE|F|BE|MU|DU|VI|MC|LS|HE|OL|STO|ME)$/,'');
+    t = t.replace(/-USD$/,'');
+    return t;
+  }
+  function toTVSymbol(ticker){
+    var t = sanitizeTicker(ticker);
+    if (!t) return '';
+    if (t.indexOf(':') !== -1) return t;
+    var MAP = {
+      'PLTR':'BATS:PLTR',
+      'DECK':'NYSE:DECK',
+      'TSLA':'NASDAQ:TSLA',
+      'META':'NASDAQ:META',
+      'BIDU':'NASDAQ:BIDU',
+      'TQQQ':'NASDAQ:TQQQ',
+      'SQQQ':'NASDAQ:SQQQ',
+      'AAPL':'NASDAQ:AAPL'
+    };
+    if (MAP[t]) return MAP[t];
+    return 'NASDAQ:' + t;
+  }
+  window.sanitizeTicker = sanitizeTicker;
+  window.toTVSymbol = toTVSymbol;
+})();
+</script>
 <div class="top-row-flex">
 <!-- Telemetry Card v2 -->
 </div>
@@ -1080,16 +1519,11 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 </div>
 </div>
 </header>
+<div class="header-spacer"></div>
 <!-- Telemetry Dashboard Page -->
 <div class="page-content" id="telemetry-page">
 <div class="main-container">
 <div class="top-section" style="; display:flex; gap:20px; align-items:stretch; flex-wrap:wrap;">
-<!-- Embedded Video -->
-<div class="video-container">
-<div class="video-wrapper">
-<iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" src="https://www.youtube.com/embed/ecbj69hjs3g?si=rrgKB4QXiJzbGCYt" title="YouTube video player"></iframe>
-</div>
-</div>
 <!-- Track Map Card -->
 <div class="gauge-panel">
 <h3>TRACK MAP</h3>
@@ -1167,11 +1601,19 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 </g>
 </svg>
 </div>
-<div class="gauge-label">Live Telemetry</div>
+</div>
+<!-- Embedded Video -->
+<div class="video-container">
+<div class="video-wrapper">
+<video controls autoplay muted loop playsinline style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:12px;border:1px solid rgba(255,255,255,.08);"><source src="file:///C:/Temp/Dashboard/audio/F1.mp4" type="video/mp4">Your browser does not support the video tag.</video>
+</div>
+
 </div><div class="stat-card telemetry-card"><div><div class="wave-container"><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div></div><div class="telemetry-title">TELEMETRY ALERT</div><div class="telemetry-message" id="telemetry-live-message">No live message</div></div></div>
 <!-- Telemetry Alert Card -->
 </div>
+</div>
 <!-- Stats Overview -->
+<h2 class="section-title">Performance Metrics</h2>
 <div class="stats-overview">
 <div class="stat-card">
 <img alt="Win Rate" class="stat-icon" onerror="this.style.display='none'" src="Images/Checked_flag.png"/>
@@ -1196,7 +1638,6 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 </div>
 <!-- Performance Gauges -->
 <div class="gauges-section">
-<h2 class="section-title">Performance Metrics</h2>
 <div class="gauges-grid">
 <div class="gauge-panel">
 <h3>CAGR</h3>
@@ -1222,23 +1663,158 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 </div>
 </div>
 <!-- Equity Curve Chart -->
-<div class="chart-panel" style="margin-bottom: 40px;">
-<h2 class="section-title" style="font-size: 32px; display: flex; align-items: center; width: 100%;">
-        F1 Grand Prix Circuit 
-        <img alt="F1 Car Front" onerror="this.style.display='none'" src="Images/F1_front.png" style="height: 48px; margin-left: 15px;"/>
+<div class="chart-panel full-bleed" style="margin-bottom: 40px;">
+<h2 class="section-title" style="font-size: 32px; display: flex; align-items: center; width: 100%;"><img alt="F1" class="title-icon circuit-icon" onerror="this.style.display=\'none\';" src="C:\\Temp\\Dashboard\\Images\\Car_Top.png"/> F1 Grand Prix Circuit 
 <label class="upload-btn" style="margin-left: auto;">
-          Upload Curve Data
+          Upload Equity Data
           <input accept=".csv" id="equity-curve-upload" type="file"/>
 </label>
 </h2>
 <div id="equity-chart-container" style="height: 400px; position: relative; background: linear-gradient(45deg, rgba(220,20,60,0.05), rgba(44,229,140,0.05)); border-radius: 12px; padding: 20px;">
 <!-- SVG will be dynamically generated here -->
 </div>
-</div>
-<div class="footer-info">
-        F1 Theme Portfolio Dashboard - Real-time trading analytics with professional-grade performance metrics
-        <br/>• All values in USD • Created by Stephen • 2025
-      </div>
+<script>
+(function(){
+  if (window.__F1_JSON_RECOVERY__) return; window.__F1_JSON_RECOVERY__=true;
+  const $=s=>document.querySelector(s);
+  const tbody=$('#f1_tbl tbody'), minis=$('#f1_minis'), diag=$('#f1_diag'), status=$('#f1_status');
+  const keyIn=$('#f1_key'); const btnPick=$('#f1_pick'), btnRefresh=$('#f1_refresh');
+
+  const fmt=(n,d=2)=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):'â€”';
+  const money=n=>Number.isFinite(+n)?((n<0?'-':'')+'$'+Math.abs(+n).toFixed(2)):'â€”';
+  const parseN=x=>{const n=parseFloat(x);return Number.isFinite(n)?n:NaN;};
+  function logd(){ if (diag) diag.textContent += Array.from(arguments).join(' ') + "\\n"; }
+  function lastBiz(){ const d=new Date(); d.setDate(d.getDate()-1); while([0,6].includes(d.getDay())) d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
+
+  (function ensureTV(){ if (window.TradingView) return; var s=document.createElement('script'); s.src="https://s3.tradingview.com/tv.js"; s.async=true; document.head.appendChild(s); })();
+  function normTV(sym){
+    if(!sym) return sym;
+    try{
+      const parts=String(sym).split(':'), ex=(parts[0]||'NASDAQ').toUpperCase(), tk=(parts[1]||parts[0]).toUpperCase().trim();
+      if (tk==='SOXL') return 'AMEX:SOXL';
+      if (tk==='SPX'||tk==='SPXW') return 'SP:SPX';
+      if (tk==='NDX') return 'NASDAQ:NDX';
+      if (tk==='RUT') return 'INDEX:RUT';
+      if (ex==='NYSEARCA'||ex==='ARCA') return 'AMEX:'+tk;
+      return ex+':'+tk;
+    }catch(e){ return sym; }
+  }
+  function addMini(tvSymbol){ /* minis temporarily disabled */ });
+      }catch(e){ logd('TV widget failed', tvSymbol, e.message); }
+    }
+    spawn();
+  }
+
+  async function fetchStock(sym, key){
+    const u=`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ logd('EQ parse',sym,e.message); return NaN; }
+    const g=j && (j["Global Quote"]||j.globalQuote||j["global quote"]);
+    const price=parseN(g&& (g["05. price"]||g.price||g["05. Price"]));
+    const prev =parseN(g&& (g["08. previous close"]||g.previousClose));
+    const v=Number.isFinite(price)?price:(Number.isFinite(prev)?prev:NaN);
+    logd('EQ',sym,'chosen',v,'raw',JSON.stringify(g).slice(0,120));
+    return v;
+  }
+  async function fetchOpt(occ,key){
+    try{
+      const u1=`https://www.alphavantage.co/query?function=OPTION_PRICE&symbol=${encodeURIComponent(occ)}&apikey=${encodeURIComponent(key)}`;
+      const r1=await fetch(u1); const t1=await r1.text(); let j1={}; try{ j1=JSON.parse(t1);}catch(e){}
+      const v=[j1.mark,j1.last,(j1.bid&&j1.ask?(+j1.bid+ +j1.ask)/2:null)].map(parseN).find(Number.isFinite);
+      if(Number.isFinite(v)){ logd('OPT',occ,'OPTION_PRICE',v); return v; }
+    }catch(e){}
+    const root=occ.slice(0,-15);
+    const u=`https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol=${encodeURIComponent(root)}&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ logd('OPT parse',occ,e.message); return NaN; }
+    const hit=((j&&j.data)||[]).find(c=>String(c.contractID).toUpperCase().replace(/\\s/g,'')===occ);
+    if(!hit){ logd('OPT',occ,'not found on',date); return NaN; }
+    const seq=[hit.mark,hit.last,(hit.bid&&hit.ask?(+hit.bid+ +hit.ask)/2:null)].map(parseN);
+    const v=seq.find(Number.isFinite); logd('OPT',occ,'chosen',v);
+    return Number.isFinite(v)?v:NaN;
+  }
+
+  let POS=[];
+  function renderTable(){
+    if (!tbody) return;
+    tbody.innerHTML='';
+    if(!POS.length){ tbody.innerHTML='<tr><td colspan="7" style="opacity:.8">No positions.</td></tr>'; return; }
+    POS.forEach(p=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML = `
+        <td>${p.symbol}</td>
+        <td>${fmt(Number(p.qty), 4)}</td>
+        <td>${fmt(+p.avgPrice,2)}</td>
+        <td class="last">â€”</td>
+        <td class="pl">â€”</td>
+        <td class="pct">â€”</td>
+      `;
+      tbody.appendChild(tr);
+      if (p.tvSymbol) addMini(p.tvSymbol);
+    });
+  }
+
+  async function refresh(){
+    const key=(keyIn&&keyIn.value)||'';
+    if(!key){ if(status) status.textContent='Enter API key then Refresh Prices.'; return; }
+    let i=0;
+    for(const p of POS){
+      i++; if(status) status.textContent=`Quote ${i}/${POS.length}â€¦`;
+      let last=NaN;
+      if (p.assetType==='option' && p.occId) last=await fetchOpt(p.occId,key,date);
+      else if (p.assetType==='stock' && p.quoteSymbol) last=await fetchStock(p.quoteSymbol,key);
+      const tr=tbody.children[i-1]; if (!tr) continue;
+      if (Number.isFinite(last)){
+        tr.querySelector('.last').textContent=fmt(last,2);
+        const mult=Number(p.multiplier|| (p.assetType==='option'?100:1)), pl = (last-Number(p.avgPrice))*Number(p.qty)*mult;
+        tr.querySelector('.pl').textContent=money(pl);
+        tr.querySelector('.pl').classList.remove('pos','neg'); tr.querySelector('.pl').classList.add(pl>=0?'pos':'neg');
+        const pct = (Number(p.avgPrice)>0? ((last/Number(p.avgPrice))-1)*100 : NaN);
+        tr.querySelector('.pct').textContent=Number.isFinite(pct)?pct.toFixed(2)+'%':'â€”';
+      }
+      await new Promise(res=>setTimeout(res,1100));
+    }
+    if (status) status.textContent='Completed.';
+  }
+
+  function applyJSON(m){
+    try{
+      const src = (m&&m.F1&&Array.isArray(m.F1.openPositions)) ? m.F1.openPositions : (m&&m.openPositions||[]);
+      const tvMap = m.tvSymbols || (m.F1&&m.F1.tvSymbols) || {};
+      POS = src.map(x=>({
+        symbol: x.symbol,
+        assetType: x.assetType || (x.occId?'option':'stock'),
+        qty: +x.qty, avgPrice:+x.avgPrice, multiplier:+(x.multiplier||1),
+        tvSymbol: x.tvSymbol || tvMap[x.symbol] || '',
+        quoteSymbol: x.quoteSymbol, underlyingTicker: x.underlyingTicker, occId: x.occId
+      }));
+      logd('No. of cars:', POS.length);
+      if (minis) if (minis) minis.innerHTML='';
+      renderTable();
+    }catch(e){ logd('applyJSON error', e.message); if(status) status.textContent='JSON error: '+e.message; }
+  }
+
+  if (btnPick) btnPick.addEventListener('click', ()=>{
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
+    inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
+      const r=new FileReader(); r.onload=()=>{ try{ const j=JSON.parse(String(r.result).replace(/\\b-?Infinity\\b/g,'null').replace(/\\bNaN\\b/g,'null')); applyJSON(j);}catch(e){ alert('Invalid JSON: '+e.message);} };
+      r.readAsText(f);
+    };
+    inp.click();
+  });
+  if (btnRefresh) btnRefresh.addEventListener('click', refresh);
+
+  // Wire to your Dashboard JSON flow
+  window.addEventListener('metrics-json-loaded', e=>{ if (e && e.detail) applyJSON(e.detail); });
+  try{
+    var _m = window.METRICS;
+    Object.defineProperty(window,'METRICS',{configurable:true,get(){return _m;},set(v){_m=v; applyJSON(v);}});
+    if (_m) applyJSON(_m);
+  }catch(e){}
+
+  // initial empty
+  renderTable();
+})();
+</script>
+<!-- ===== /F1 Live â€” Open Positions (Recovery-Spliced) ===== -->
 </div>
 </div>
 <!-- Podium Page -->
@@ -1314,7 +1890,7 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 <div class="table-header">
 <div class="pos-col">Pos</div>
 <div class="driver-col">Car</div>
-<div class="team-col">Team</div>
+<div class="team-col">Driver/Team</div>
 <div class="points-col">Points</div>
 <div class="wins-col">GRAND PRIX</div>
 <div class="fastest-col">WIN RATE</div>
@@ -1418,7 +1994,7 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 <img alt="" class="title-icon" onerror="this.style.display='none'" src="Images/room_icon.png"/>
     Debrief Room
   <button class="nav-btn" id="getInsightsBtn" style="margin-left:auto; font-size:14px; padding:4px 10px;">GET INSIGHTS</button></h2>
-<div class="muted" id="debriefStatus" style="display:none; margin:6px 0 0 0;">✔ Data ready for LLM</div>
+<div class="muted" id="debriefStatus" style="display:none; margin:6px 0 0 0;">âœ” Data ready for LLM</div>
 <div class="chart-panel">
 <section class="panel" id="debriefSection" style="margin-top:20px">
 <h2 class="section-title"></h2>
@@ -1436,7 +2012,7 @@ window.DEBRIEF_API_URL = window.DEBRIEF_API_URL || '/api/llm-analysis'; // e.g. 
 <div aria-labelledby="kmTitle" aria-modal="true" class="f1-modal-overlay" id="keyModal" role="dialog" style="display:none;"><div class="f1-modal-box">
 <div class="modal-card">
 <h3 id="kmTitle">Use Key to unlock debrief room</h3>
-<p class="muted" style="margin-top:-4px"><code>sk-...</code> • Hint: API key</p>
+<p class="muted" style="margin-top:-4px"><code>sk-...</code>Hint: API key</p>
 <label></label>
 <input id="apiKeyField" placeholder="sk-..." type="password"/>
 <div class="modal-actions">
@@ -1451,7 +2027,6 @@ function parseMoney(v){ if(v==null) return 0; var s=String(v).trim(); if(!s) ret
 function parseNum(v){ if(v==null) return null; var s=String(v).trim(); if(!s) return null; s=s.replace(/,/g,''); var x=parseFloat(s); return isFinite(x)? x : null; }
 function findFieldCI(fields, target){ var t=target.toLowerCase(); for(var i=0;i<fields.length;i++){ if(String(fields[i]).toLowerCase()===t) return fields[i]; } return null; }
 function nameGuess(fields){ var lower=fields.map(function(c){return String(c).toLowerCase();}); function pick(names){ for(var i=0;i<names.length;i++){ var n=names[i]; var idx=lower.indexOf(String(n).toLowerCase()); if(idx!==-1) return fields[idx]; } return names[0]; } return { date:pick(['Date']), id:pick(['ID']), underlying:pick(['UNDERLYING_TICKER','UNDERLYING_RAW']), net:pick(['Net Amount (S$) (Fuel)','Net Amount (S$)','Net Amount']), status:pick(['Status']), qty:pick(['Quantity']), equity: findFieldCI(fields,'PORTFOLIO_EQUITY'), o: findFieldCI(fields,'OPEN')||findFieldCI(fields,'Open'), h: findFieldCI(fields,'HIGH')||findFieldCI(fields,'High'), l: findFieldCI(fields,'LOW')||findFieldCI(fields,'Low'), c: findFieldCI(fields,'CLOSE')||findFieldCI(fields,'Close'), strategy: findFieldCI(fields,'Strategy (Car)')||findFieldCI(fields,'Strategy') }; }
-
 
 // === Open-by-ID reconstruction helpers (shared) ===
 function __computeOpenById_fromParsedAndRaw(parsed, rows, fields){
@@ -1640,12 +2215,37 @@ document.addEventListener("DOMContentLoaded", function(){
     });
       
     // REVISED: This now calls the powerful calculation engine
-    csvInput.addEventListener('change', function(){
+    
+csvInput.addEventListener('change', function(){
       var file = csvInput.files && csvInput.files[0];
       if (!file) {
         console.warn("[F1] No file selected");
         return;
       }
+      if (debriefStatus) {
+          debriefStatus.style.display = 'block';
+          debriefStatus.textContent = 'Loading ' + file.name + '...';
+      }
+
+      // --- NEW: If JSON selected, parse and apply directly ---
+      if (/\.(json)$/i.test(file.name)) {
+        var reader = new FileReader();
+        reader.onload = function(ev){
+          try{
+            var m = JSON.parse(ev.target.result);
+            applyMetricsAndSummary(m);
+          }catch(e){
+            console.error("[F1] JSON parse error:", e);
+            alert("Invalid metrics JSON: " + e.message);
+            if (debriefStatus) debriefStatus.textContent = 'Invalid metrics JSON';
+          }
+        };
+        reader.onerror = function(){ alert("Failed to read JSON file."); };
+        reader.readAsText(file);
+        return;
+      }
+
+      // --- Fallback: CSV path (existing flow) ---
       if (!window.Papa){
         alert("CSV parser (PapaParse) is not loaded on this page.");
         return;
@@ -1673,7 +2273,7 @@ document.addEventListener("DOMContentLoaded", function(){
             // Call the powerful calculation engine!
             var detailedSummary = summarizeRows(rows, fields, startingCapital, '');
             
-            // --- NEW: Map summary to dashboard metrics and update the UI ---
+            // --- Map summary to dashboard metrics and update the UI ---
             const metricsForDashboard = {
                 CAGR: detailedSummary.performance.cagr,
                 Sharpe: detailedSummary.performance.sharpe_event,
@@ -1684,9 +2284,8 @@ document.addEventListener("DOMContentLoaded", function(){
                 OpenTrades: detailedSummary.counts.open
             };
             updateDashboardMetrics(metricsForDashboard);
-            // --- END NEW CODE ---
             
-            // Exclude the full equity curve from the payload to keep it smaller
+            // Build summary for LLM
             var summaryForLlm = {
                 meta: detailedSummary.meta,
                 counts: detailedSummary.counts,
@@ -1707,7 +2306,7 @@ document.addEventListener("DOMContentLoaded", function(){
             window.DEBRIEF_SUMMARY = summaryForLlm;
             console.log("[F1] Detailed summary ready:", summaryForLlm);
             if (debriefStatus){
-              debriefStatus.textContent = '✔ Ready for analysis.';
+              debriefStatus.textContent = 'Ready for analysis.';
             }
           } catch(e){
             console.error("[F1] Detailed summary build error:", e);
@@ -1723,6 +2322,7 @@ document.addEventListener("DOMContentLoaded", function(){
       });
     });
   }
+
 
   // GET INSIGHTS: require summary, open modal
   if (btnGetInsights){
@@ -1770,6 +2370,25 @@ document.addEventListener("DOMContentLoaded", function(){
 </script>
 <script>
 window.runLLMAnalysis = function(summary, apiKey){
+  try {
+    if (typeof window.__normalizeDebriefSummary === 'function') {
+      summary = window.__normalizeDebriefSummary(summary);
+    } else {
+      // minimal normalization
+      if (summary && summary.meta) {
+        if (summary.meta.rowCount == null) {
+          var rc = null;
+          if (typeof summary.meta.rows === 'number') rc = summary.meta.rows;
+          if (rc == null && summary.counts && typeof summary.counts.openRows==='number' && typeof summary.counts.closedRows==='number') {
+            rc = summary.counts.openRows + summary.counts.closedRows;
+          }
+          if (rc == null && summary.tripStats && typeof summary.tripStats.n === 'number') rc = summary.tripStats.n;
+          summary.meta.rowCount = rc != null ? rc : 0;
+        }
+      }
+    }
+  } catch(_e) {}
+
   var out = document.getElementById('debrief');
   if (!out) return;
   if (!summary || !summary.meta || !summary.meta.rowCount){
@@ -1782,7 +2401,7 @@ window.runLLMAnalysis = function(summary, apiKey){
   }
 
   // Show progress
-  out.innerHTML = '<h3>Portfolio Analysis Report</h3><div class="muted">Running analysis…</div>';
+  out.innerHTML = '<h3>Portfolio Analysis Report</h3><div class="muted">Running analysis</div>';
 
   // --- Construct the detailed user prompt from the summary data ---
 
@@ -1816,33 +2435,33 @@ You are given a client-side computed summary of my trading portfolio. Use only t
 
 Task
 
-Produce a professional, portfolio-manager grade Performance Debrief — “Race Engineer” Report in the same style and section order as below.
+Produce a professional, portfolio-manager grade Performance Debrief â€” â€œRace Engineerâ€ Report in the same style and section order as below.
 Tone & Persona
 
 Encouraging, professional, F1 race-engineer analogies where helpful. Be concise and actionable.
-Deliverable — Section Outline (use exact headings):
+Deliverable â€” Section Outline (use exact headings):
 
-Executive Summary (Pit Wall View) – 6–10 bullet insights: returns, Sharpe, drawdown, what’s driving P/L, key risks.
-Quantitative Performance Review – headline returns, event-level Sharpe (√252), volatility, drawdown timing, holding period notes.
-Strategy Effectiveness (Garage Breakdown) – table-driven interpretation: which strategy types work/struggle; expectancy, PF, payoff drivers; sample-size caveats.
-Concentration & Exposure (Track Map) – top underlyings by P/L, factor/sector tilt, day-of-week/time clustering if any.
-Open Positions – Risk Readiness (Live Stint) – identify unrealized drag, margin/collateral considerations, near-term catalysts, and immediate actions.
-Risk Diagnostics (Safety Car Procedures) – tail risks, gamma/vega heat, drawdown governance triggers.
-Strategic Recommendations (Actionable Upgrades) – entry filters, exits, sizing rails, event gating, diversification; bullet points with numeric guardrails.
-What’s Working / What Can Break / Opportunities – three short bullets each.
-Immediate Checklist (Before Next Stint) – 5–7 concrete steps.
-Final Word (Parc Fermé) – brief wrap-up.
+Executive Summary (Pit Wall View) â€“ 6â€“10 bullet insights: returns, Sharpe, drawdown, whatâ€™s driving P/L, key risks.
+Quantitative Performance Review â€“ headline returns, event-level Sharpe (âˆš252), volatility, drawdown timing, holding period notes.
+Strategy Effectiveness (Garage Breakdown) â€“ table-driven interpretation: which strategy types work/struggle; expectancy, PF, payoff drivers; sample-size caveats.
+Concentration & Exposure (Track Map) â€“ top underlyings by P/L, factor/sector tilt, day-of-week/time clustering if any.
+Open Positions â€“ Risk Readiness (Live Stint) â€“ identify unrealized drag, margin/collateral considerations, near-term catalysts, and immediate actions.
+Risk Diagnostics (Safety Car Procedures) â€“ tail risks, gamma/vega heat, drawdown governance triggers.
+Strategic Recommendations (Actionable Upgrades) â€“ entry filters, exits, sizing rails, event gating, diversification; bullet points with numeric guardrails.
+Whatâ€™s Working / What Can Break / Opportunities â€“ three short bullets each.
+Immediate Checklist (Before Next Stint) â€“ 5â€“7 concrete steps.
+Final Word (Parc FermÃ©) â€“ brief wrap-up.
 Rules & Conventions
 
-Use currency symbol and units exactly as in the input (e.g., “US$”).
-Treat “Sharpe” as event-level (closed-event returns, annualized by √252).
+Use currency symbol and units exactly as in the input (e.g., â€œUS$â€).
+Treat â€œSharpeâ€ as event-level (closed-event returns, annualized by âˆš252).
 Do not restate raw tables; interpret them.
 Call out sample-size limitations.
 If an accounting mismatch appears (e.g., Net All vs End Equity), flag it and propose reconciliation steps.
 No code, no formulas, no images in the output.
 Inputs (paste below each time):
 
-Period & Capital: ${perf.startDate} → ${perf.endDate}; Starting Capital US$${meta.startingCapital}.
+Period & Capital: ${perf.startDate} â†’ ${perf.endDate}; Starting Capital US$${meta.startingCapital}.
 Headline Metrics: Total Return: ${(perf.totalReturn * 100).toFixed(2)}%, CAGR: ${(perf.cagr * 100).toFixed(2)}%, Sharpe (event): ${perf.sharpe_event ? perf.sharpe_event.toFixed(2) : 'N/A'}, Volatility (ann, event): ${perf.volAnn_event ? (perf.volAnn_event * 100).toFixed(2) : 'N/A'}%, Max Drawdown: ${(perf.maxDD * 100).toFixed(2)}%, Median Hold (days): ${trips.medianHold ? trips.medianHold.toFixed(1) : 'N/A'}, Closed Rows: ${counts.closed}, Open Rows: ${counts.open}, Closed Trips: ${trips.n}, Win Rate: ${(trips.winRate * 100).toFixed(1)}%, Profit Factor: ${trips.profitFactor ? trips.profitFactor.toFixed(2) : 'N/A'}, Payoff Ratio: ${trips.payoff ? trips.payoff.toFixed(2) : 'N/A'}, Expectancy: ${trips.expectancy ? trips.expectancy.toFixed(2) : 'N/A'}.
 By-Strategy Table (closed trips): ${JSON.stringify(summary.strategyStats, null, 2)}
 Top Underlyings by |P/L|: ${JSON.stringify(summary.topUnderlying, null, 2)}
@@ -1863,7 +2482,7 @@ Flags sample-size constraints and accounting mismatches when present.`;
       "Authorization": "Bearer " + apiKey
     },
     body: JSON.stringify({
-      model: (document.getElementById("modelInput") && document.getElementById("modelInput").value) || "gpt-4o-mini",
+      model: (document.getElementById("modelInput") && document.getElementById("modelInput").value) || "gpt-5.1",
       messages: [
         { role: "system",
           content: "You are 'GP', an expert F1 Race Engineer and world-class Portfolio Analyst. Use an encouraging, professional tone with F1 analogies. You are given a detailed, client-side computed summary of a trading portfolio. Your task is to provide a comprehensive, multi-faceted performance and risk analysis of the attached trading portfolio history. The report should be structured for a portfolio manager and go beyond simple profit/loss calculations. I need a deep, qualitative and quantitative assessment of strategy effectiveness, an analysis of holdings and concentration risk, a review of open positions, and a concluding section with actionable, strategic recommendations. The final output should be a professional-grade report that identifies key strengths, critical vulnerabilities, and clear opportunities for improvement."
@@ -1980,7 +2599,6 @@ let celebrationBottle;
 const celebrationGravity = 0.1;
 let celebrationHue = 0;
 let sprayInterval = null;
-
 
 /**
  * Bottle Class for Champagne Effect
@@ -2117,7 +2735,6 @@ function triggerChampagneSpray(durationMs) {
         }
     }, durationMs);
 }
-
 
 /**
  * F1-Style Glossy Gauge (SVG) - Enhanced for Portfolio Dashboard
@@ -2316,7 +2933,6 @@ function createGauge(root, opts = {}) {
   }
   svg.appendChild(scaleGroup);
 
-
   // Needle
   const needle = document.createElementNS(svgNS, "g");
   needle.style.transformOrigin = `${cx}px ${cy}px`;
@@ -2363,7 +2979,6 @@ function createGauge(root, opts = {}) {
   // Set initial needle position to point at 0
   const initialAngle = minAngle; // This corresponds to the 0 value on the scale
   needle.style.transform = `rotate(${initialAngle * 180 / Math.PI}deg)`;
-
 
   // Animation function
   function animateNeedle(targetPercent, duration = 2000) {
@@ -2578,7 +3193,7 @@ function drawEquityCurve(data, containerId) {
   const startDate = dates[0];
   const endDate = dates[dates.length - 1];
   const dateRange = endDate.getTime() - startDate.getTime();
-  const margin = { top: 40, right: 40, bottom: 40, left: 60 };
+  const margin = { top: 40, right: 40, bottom: 80, left: 60 };
   const width = 800 - margin.left - margin.right;
   const height = 300 - margin.top - margin.bottom;
   const xScale = (date) => margin.left + ((date.getTime() - startDate.getTime()) / dateRange) * width;
@@ -2602,29 +3217,34 @@ function drawEquityCurve(data, containerId) {
     text.setAttribute('x', margin.left - 10);
     text.setAttribute('y', y);
     text.setAttribute('fill', '#aeb7c5');
-    text.setAttribute('font-size', '12');
+    text.setAttribute('font-size', '10');
     text.setAttribute('text-anchor', 'end');
     text.setAttribute('alignment-baseline', 'middle');
     text.textContent = `$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
     svg.appendChild(text);
   }
-  const numLabels = Math.min(dates.length, 5);
-  for (let i = 0; i < numLabels; i++) {
-    const index = Math.floor(i * (dates.length - 1) / (numLabels - 1));
-    const date = dates[index];
-    const x = xScale(date);
-    const text = document.createElementNS(svgNS, 'text');
-    text.setAttribute('x', x);
-    text.setAttribute('y', margin.top + height + 20);
-    text.setAttribute('fill', '#aeb7c5');
-    text.setAttribute('font-size', '12');
-    text.setAttribute('text-anchor', 'middle');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const year = date.getUTCFullYear();
-    text.textContent = `${day} ${month} ${year}`;
-    svg.appendChild(text);
-  }
+  const numLabels = dates.length;
+for (let i = 0; i < numLabels; i++) {
+  const index = i;
+  const date = dates[index];
+  const x = xScale(date);
+  const y = margin.top + height + 20;
+
+  const text = document.createElementNS(svgNS, 'text');
+  text.setAttribute('x', x);
+  text.setAttribute('y', y);
+  text.setAttribute('fill', '#aeb7c5');
+  text.setAttribute('font-size', '10');
+  text.setAttribute('text-anchor', 'end');
+  text.setAttribute('alignment-baseline', 'middle');
+  text.setAttribute('transform', `rotate(-90 ${x} ${y})`);
+
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const yy = String(date.getUTCFullYear()).slice(-2);
+  text.textContent = `${mm} ${yy}`;
+
+  svg.appendChild(text);
+}
 
   // Drawing Path
   const pathData = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.Date)} ${yScale(d.Equity)}`).join(' ');
@@ -2713,7 +3333,7 @@ function drawEquityCurve(data, containerId) {
   returnText.setAttribute('x', '400');
   returnText.setAttribute('y', '20');
   returnText.setAttribute('fill', totalReturn >= 0 ? '#2ce58c' : '#ff3b3b');
-  returnText.setAttribute('font-size', '16');
+  returnText.setAttribute('font-size', '14');
   returnText.setAttribute('font-weight', 'bold');
   returnText.setAttribute('text-anchor', 'middle');
   returnText.textContent = `${totalReturn >= 0 ? '+' : ''}${totalReturn.toFixed(1)}% Total Return`;
@@ -2723,14 +3343,13 @@ function drawEquityCurve(data, containerId) {
   profitText.setAttribute('x', '400');
   profitText.setAttribute('y', '38');
   profitText.setAttribute('fill', '#aeb7c5');
-  profitText.setAttribute('font-size', '12');
+  profitText.setAttribute('font-size', '10');
   profitText.setAttribute('text-anchor', 'middle');
   profitText.textContent = `Racing to Victory: $${totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Profit`;
   svg.appendChild(profitText);
 
   container.appendChild(svg);
 }
-
 
 // --- Equity curve CSV upload handler ---
 function handleEquityCurveUpload(event) {
@@ -2986,6 +3605,48 @@ document.addEventListener('DOMContentLoaded', function() {
             valueElement.textContent = '0.0%';
           }
       });
+      // === Gauge wobble (micro animation) ===
+      window.__GAUGE_WOBBLE__ = (function(){
+        const WOBBLE = {
+          amplitudePct: { cagr: 1.2, sharpe: 2.0, roi: 2.5 },
+          intervalMs: 500,
+          durationMs: 500,
+          mode: 'sine' // 'random' | 'sine'
+        };
+        let _phase = 0;
+        const clamp = v => Math.max(0, Math.min(100, v));
+        function wobbleDelta(ampl){
+          if (WOBBLE.mode === 'sine'){
+            _phase += Math.PI/8;
+            return ampl * Math.sin(_phase);
+          }
+          return (Math.random()*2 - 1) * ampl;
+        }
+        function readValueAsNumber(txt){
+          if (!txt) return NaN;
+          const t = String(txt).trim();
+          if (t.endsWith('%')) return parseFloat(t)/100;
+          return parseFloat(t);
+        }
+        function tick(){
+          if (document.hidden) return;
+          Object.entries(gaugeConfig).forEach(([key, cfg]) => {
+            try{
+              const inst = cfg.instance;
+              const [min, max] = cfg.range;
+              const valEl = document.getElementById(cfg.valueId);
+              const raw = valEl ? valEl.textContent : '';
+              const val = readValueAsNumber(raw);
+              if (!isFinite(val) || !inst || !isFinite(min) || !isFinite(max) || max<=min) return;
+              const basePct = clamp(((val - min)/(max - min))*100);
+              const ampl = (WOBBLE.amplitudePct[key] ?? 1.0);
+              inst.animateNeedle(clamp(basePct + wobbleDelta(ampl)), WOBBLE.durationMs);
+            }catch(e){ /* noop */ }
+          });
+        }
+        const id = setInterval(tick, WOBBLE.intervalMs);
+        return { stop: ()=>clearInterval(id), config: WOBBLE };
+      })();
 
       document.getElementById('csv-upload')?.addEventListener('change', handleFileUpload);
       document.getElementById('equity-curve-upload')?.addEventListener('change', handleEquityCurveUpload);
@@ -3070,7 +3731,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var drs  = (m.DRS != null ? num(m.DRS) : (m.ProfitFactor != null ? num(m.ProfitFactor) : null));
 
       if (cagr != null && cagr < 0.12) {
-        q.push({ title: 'CAGR ALERT!', message: 'We’re seeing slower pace in your CAGR, keep pushing!', audioId: 'cagr-audio' });
+        q.push({ title: 'CAGR ALERT!', message: 'We are seeing slower pace in your CAGR, keep pushing!', audioId: 'cagr-audio' });
       }
       if (shrp != null && shrp < 1.0) {
         q.push({ title: 'SHARPE RATIO ALERT!', message: 'On this sector, your throttle application is inconsistent. Try a smoother approach to carry more momentum.', audioId: 'sharpe-audio' });
@@ -3078,7 +3739,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (drs != null && drs < 1) {
         q.push({ title: 'DRS ALERT!', message: 'DRS enabled. Gap is eight tenths. You should see the speed differential in a moment.', audioId: 'pf-audio' });
       }
-      if (mdd != null && mdd < -0.30) {
+      if (mdd != null && mdd > 0.30) {
         q.push({ title: 'MAX DRAWDOWN ALERT!', message: 'We have a slight issue for the front-left wheel nut. Need to be careful with it, driver.', audioId: 'mdd-audio' });
       }
 
@@ -3091,5 +3752,2168 @@ document.addEventListener('DOMContentLoaded', function() {
     return result;
   };
 })();
-</script></body>
+</script>
+<script>
+// F1 Live (safe wiring) â€” CLEAN REPLACEMENT
+(function(){
+  var state = { positions: [], quotes: {} };
+
+  // Elements
+  var statusEl  = document.getElementById('live-status');
+  var keyInput  = document.getElementById('av-key-input');
+  var saveBtn   = document.getElementById('save-av-key');
+  var refreshBtn= document.getElementById('refresh-f1-live');
+  var uploadEl  = document.getElementById('csvInput'); // existing file input used by GET DATA
+  var tableBody = document.querySelector('#live-table tbody');
+  var widgetsEl = document.getElementById('live-widgets');
+  var summaryEl = document.getElementById('live-summary');
+
+  function say(msg, ok){
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.style.color = ok ? '' : '#cc2e2e';
+    setTimeout(function(){ statusEl.textContent=''; }, 3000);
+  }
+
+  function getField(obj, names){
+    var norm = {};
+    Object.keys(obj).forEach(function(k){
+      var nk = String(k||'').toLowerCase().replace(/[()$]/g,'').replace(/\s+/g,'');
+      norm[nk] = k;
+    });
+    for (var i=0;i<names.length;i++){
+      var nk2 = String(names[i]).toLowerCase().replace(/[()$]/g,'').replace(/\s+/g,'');
+      if (norm[nk2] != null) return obj[norm[nk2]];
+    }
+    return undefined;
+  }
+
+  function toNum(x){
+    if (x==null || x==='') return NaN;
+    var s = String(x).replace(/,/g,'').replace(/USD|US\$|S\$|\$/g,'');
+    if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1,-1);
+    return parseFloat(s);
+  }
+
+  // FIFO per ticker (handles short/long; options use x100 multiplier by ID length>15)
+  function fifoFromTrades(trades){
+    trades.sort(function(a,b){ return a.date - b.date; });
+    var isOption = (trades[0].ticker||'').length > 15;
+    var mult = isOption ? 100 : 1;
+    var longLots=[], shortLots=[], net=0, longCost=0, shortPro=0;
+
+    for (var t of trades){
+      if (t.qty > 0){
+        var rem=t.qty;
+        // cover shorts first
+        while(rem>1e-12 && shortLots.length){
+          var lot=shortLots[0], take=Math.min(lot.qty,rem);
+          shortPro -= take*lot.entry*mult; net += take;
+          lot.qty -= take; rem -= take;
+          if(lot.qty<=1e-12) shortLots.shift();
+        }
+        if (rem>1e-12){
+          longLots.push({qty:rem, price:t.price});
+          longCost += rem*t.price*mult;
+          net += rem;
+        }
+      }else if (t.qty < 0){
+        var sell=-t.qty;
+        while(sell>1e-12 && longLots.length){
+          var lot2=longLots[0], take2=Math.min(lot2.qty,sell);
+          longCost -= take2*lot2.price*mult; net -= take2;
+          lot2.qty -= take2; sell -= take2;
+          if(lot2.qty<=1e-12) longLots.shift();
+        }
+        if (sell>1e-12){
+          shortLots.push({qty:sell, entry:t.price});
+          shortPro += sell*t.price*mult;
+          net -= sell;
+        }
+      }
+    }
+    if (net>1e-12) return {qty:net, avg:(longCost/(net*mult))||0, basis:longCost, mult:mult};
+    if (net<-1e-12){ var qS=-net; return {qty:net, avg:(shortPro/(qS*mult))||0, basis:shortPro, mult:mult}; }
+    return {qty:0, avg:0, basis:0, mult:mult};
+  }
+
+  function buildPositions(rows){
+    var filtered = rows.filter(function(r){
+      var acct = String(getField(r,['Acct ID (Team)','AcctID(Team)','AcctID Team','Acct ID','Account'])||'').trim().toLowerCase();
+      var status = String(getField(r,['Status'])||'').trim().toLowerCase();
+      return (acct==='stock ibkr' || acct==='option ibkr') && status==='open';
+    });
+    if (!filtered.length) return [];
+
+    var norm=[];
+    for (var i=0;i<filtered.length;i++){
+      var r=filtered[i];
+      var id = getField(r,['ID']);
+      var sym = getField(r,['Symbol','Ticker']);
+      var und = getField(r,['UNDERLYING_TICKER','UNDERLYING_RAW']);
+      var side = String(getField(r,['Type','Side','Action'])||'').toLowerCase();
+      var q = toNum(getField(r,['Quantity','Qty','Shares','Units']));
+      if (!isFinite(q)) continue;
+      q = (side.indexOf('sell')>=0 || side.indexOf('short')>=0) ? -Math.abs(q) : Math.abs(q);
+      var px = toNum(getField(r,['Price (US$)','Price USD','PriceUS$','Price','Fill Price','Avg Price','Average Price']));
+      if (!isFinite(px)) continue;
+      var d = new Date(getField(r,['Date','Trade Date','Execution Time'])||Date.now());
+      var ticker = (id && String(id).trim()) ? String(id).trim().toUpperCase().replace(/\s/g,'')
+                  : (und && String(und).trim() ? String(und).trim().toUpperCase()
+                  : (sym ? String(sym).trim().toUpperCase() : ''));
+      var display = sym ? String(sym).trim() : ticker;
+      norm.push({ticker:ticker, display:display, date:d, qty:q, price:px});
+    }
+
+    var by = new Map();
+    norm.forEach(function(t){ var key=t.ticker; if (!by.has(key)) by.set(key, []); by.get(key).push(t); });
+
+    var out=[];
+    by.forEach(function(trs, key){
+      var res = fifoFromTrades(trs);
+      if (Math.abs(res.qty)>1e-12){
+        out.push({symbol:key, display:trs[0].display, qty:res.qty, avgCost:res.avg, costTotal:res.basis, mult:res.mult});
+      }
+    });
+    return out;
+  }
+
+  // Rendering
+  function renderSummary(positions){
+    if(!summaryEl) return;
+    var cost=0, mv=0;
+    positions.forEach(function(p){
+      cost += (p.qty>0 ? p.costTotal : -p.costTotal);
+      var last = (state.quotes[p.symbol] && state.quotes[p.symbol].last) || p.avgCost;
+      mv += last * p.qty * (p.mult||1);
+    });
+    var pl = mv - cost; var plPct = cost ? (pl/cost*100) : 0;
+    summaryEl.innerHTML='';
+    [['Total Cost Basis','$'+cost.toFixed(2)],['Current Market Value','$'+mv.toFixed(2)],
+     ['Unrealized P/L',(pl>=0?'+':'')+'$'+pl.toFixed(2)],['Unrealized P/L %',(plPct>=0?'+':'')+plPct.toFixed(2)+'%']]
+    .forEach(function(kv,idx){
+      var d=document.createElement('div'); d.className='kpi';
+      d.innerHTML='<div style="font-size:12px;opacity:.8">'+kv[0]+'</div><div style="font-size:18px;font-weight:700;'+(idx>1?(pl>=0?'color:#1aa65b;':'color:#cc2e2e;'):'')+'">'+kv[1]+'</div>';
+      summaryEl.appendChild(d);
+    });
+  }
+
+  function renderTable(positions){
+    if(!tableBody) return;
+    tableBody.innerHTML='';
+    if(!positions.length){ tableBody.innerHTML='<tr><td colspan="6" class="live-empty">No open positions for Stock/Option IBKR.</td></tr>'; return; }
+    positions.forEach(function(p){
+      var isShort=p.qty<0; var last=(state.quotes[p.symbol] && state.quotes[p.symbol].last) || p.avgCost; var mult=p.mult||1;
+      var pl = isShort ? (p.costTotal - last*Math.abs(p.qty)*mult) : (last*p.qty*mult - p.costTotal);
+      var plPct = p.avgCost ? (isShort ? ((p.avgCost/last-1)*100) : ((last/p.avgCost-1)*100)) : 0;
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td style="font-weight:600">'+(p.display||p.symbol)+'</td><td>'+p.qty.toLocaleString()+'</td><td>$'+p.avgCost.toFixed(2)+'</td><td>$'+(isFinite(last)?last.toFixed(2):'â€”')+'</td><td class="'+(pl>=0?'live-pl-pos':'live-pl-neg')+'">'+(pl>=0?'+':'')+'$'+(isFinite(pl)?pl.toFixed(2):'â€”')+'</td><td class="'+(plPct>=0?'live-pl-pos':'live-pl-neg')+'">'+(plPct>=0?'+':'')+(isFinite(plPct)?plPct.toFixed(2)+'%':'â€”')+'</td>';
+      tableBody.appendChild(tr);
+    });
+  }
+
+  function toTVSymbol(t){
+    if(!t) return '';
+    t=String(t).toUpperCase();
+    if(t.indexOf(':')!==-1) return t;
+    var MAP={'PLTR':'BATS:PLTR','DECK':'NYSE:DECK','TSLA':'NASDAQ:TSLA','META':'NASDAQ:META','BIDU':'NASDAQ:BIDU','TQQQ':'NASDAQ:TQQQ','SQQQ':'NASDAQ:SQQQ','AAPL':'NASDAQ:AAPL','SPY':'AMEX:SPY','QQQ':'NASDAQ:QQQ','IWM':'AMEX:IWM','DIA':'AMEX:DIA'};
+    return MAP[t]||t;
+  }
+
+  function renderWidgets(positions){
+    if(!widgetsEl) return;
+    widgetsEl.innerHTML='';
+    var und=new Set();
+    positions.forEach(function(p){
+      var t=p.symbol||'';
+      if(t.length>15) t = t.slice(0,t.length-15);
+      if(t) und.add(t);
+    });
+    und.forEach(function(ticker){
+      var tv=toTVSymbol(ticker);
+      var container=document.createElement('div');
+      container.className='live-card tradingview-widget-container';
+      var inner=document.createElement('div');
+      inner.className='tradingview-widget-container__widget'; inner.style.height='100%';
+      container.appendChild(inner); widgetsEl.appendChild(container);
+      var s=document.createElement('script');
+      s.type='text/javascript'; s.src='https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js'; s.async=true;
+      s.innerHTML=JSON.stringify({symbol:tv, chartOnly:false, dateRange:'12M', noTimeScale:true, colorTheme:'dark', isTransparent:true, locale:'en', width:'100%', autosize:false, height:'100%'});
+      container.appendChild(s);
+    });
+  }
+
+  function renderAll(){ renderSummary(state.positions); renderTable(state.positions); renderWidgets(state.positions); }
+
+  // Alpha Vantage
+  function ymdYesterday(){ var y=new Date(); y.setDate(y.getDate()-1); return y.toISOString().slice(0,10); }
+  async function fetchAlphaQuote(sym,key){
+    try{
+      var url='https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol='+encodeURIComponent(sym)+'&apikey='+encodeURIComponent(key);
+      var r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status);
+      var data=await r.json(); var gq=data && (data['Global Quote']||data['globalQuote']);
+      var px=gq?parseFloat(gq['05. price']||gq['price']):NaN;
+      if(isFinite(px)) return {last:px,time:new Date()};
+      return null;
+    }catch(e){ return null; }
+  }
+  async function fetchAlphaOptionQuote(contractId,key){
+    try{
+      var symbol=contractId.substring(0,contractId.length-15).trim();
+      var date=ymdYesterday();
+      var url='https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol='+encodeURIComponent(symbol)+'&date='+date+'&apikey='+encodeURIComponent(key);
+      var r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status);
+      var data=await r.json();
+      if(data && Array.isArray(data.data) && data.data.length){
+        var hit=data.data.find(function(c){ return c.contractID===contractId; });
+        if(hit){ var mark=parseFloat(hit.mark); if(isFinite(mark)) return {last:mark,time:new Date(date)}; }
+      }
+      return null;
+    }catch(e){ return null; }
+  }
+  async function fetchAllQuotes(){
+    var key=(keyInput && keyInput.value.trim())||localStorage.getItem('av_key')||'';
+    if(!key){ say('Enter Alpha Vantage API key', false); return; }
+    say('Update...', true);
+    for (var i=0;i<state.positions.length;i++){
+      var s=state.positions[i].symbol;
+      var q=(s.length>15)? await fetchAlphaOptionQuote(s,key) : await fetchAlphaQuote(s,key);
+      if(q) state.quotes[s]=q;
+      renderSummary(state.positions); renderTable(state.positions);
+    }
+    say('Prices refreshed.', true);
+  }
+
+  // Parse CSV on change (GET DATA button already wired elsewhere)
+  function parsePositionsCSV(file){
+    if(!window.Papa){ say('CSV parser missing', false); return; }
+    Papa.parse(file, {
+      header:true, skipEmptyLines:true,
+      complete:function(res){
+        try{
+          var rows=res.data||[];
+          state.positions=buildPositions(rows);
+          say(state.positions.length+' positions', true);
+          renderAll();
+        }catch(err){ console.error(err); say('Error processing CSV', false); }
+      },
+      error:function(err){ console.error(err); say('CSV read error', false); }
+    });
+  }
+
+  // Wire controls & input once window loads
+  window.addEventListener('load', function(){
+    try{
+      if(keyInput){ var saved=localStorage.getItem('av_key')||''; if(saved) keyInput.value=saved; }
+      if(saveBtn){ saveBtn.addEventListener('click', function(){ var v=(keyInput && keyInput.value.trim())||''; localStorage.setItem('av_key', v); say('API key saved.', true); }); }
+      if(refreshBtn){ refreshBtn.addEventListener('click', function(){ if(!state.positions.length){ say('Load positions first.', false); return; } fetchAllQuotes(); }); }
+      if(uploadEl){ uploadEl.addEventListener('change', function(e){ var f=e.target.files && e.target.files[0]; if(!f) return; parsePositionsCSV(f); }); }
+      say('F1 Live ready', true);
+    }catch(e){ console.error('F1 Live init error', e); }
+  });
+})();
+</script>
+<script>
+(function() {
+  // === Embedded metrics (no fetch, no fallback) ===
+  const METRICS = {"WinRate": 0.5102040816326531, "ProfitFactor": 1.1163412277006508, "OpenPositions": 12, "MaxDrawdown": 1.2718685670609275, "CAGR": 0.5056632672002122, "Sharpe": -0.7136941335731328, "ROI": 0.370037485233091, "TripCount": 343, "Wins": 175, "Losses": 168, "SumPos": 33181.09133589699, "SumAbsNeg": 29723.072580810003, "Basis": "Trip-level (Closed by latest ID status), PnL = sum(Net Amount (Fuel)) per ID", "EquityStart": 9823.102583, "EquityEnd": 13458.01876, "Days": 281};
+
+  function setText(id, text){
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+  function setGauge(id, text){
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+  function updateTilesFromMetrics(m){
+    var metricsForDashboard = {
+      WinRate: (typeof m.WinRate === 'number' ? m.WinRate : 0),
+      ProfitFactor: (typeof m.ProfitFactor === 'number' ? m.ProfitFactor : 0),
+      OpenTrades: (typeof m.OpenPositions === 'number' ? m.OpenPositions : 0),
+      MaxDrawdown: (typeof m.MaxDrawdown === 'number' ? m.MaxDrawdown : 0),
+      CAGR: (typeof m.CAGR === 'number' ? m.CAGR : 0),
+      Sharpe: (typeof m.Sharpe === 'number' ? m.Sharpe : 0),
+      ROI: (typeof m.ROI === 'number' ? m.ROI : 0)
+    };
+    if (typeof updateDashboardMetrics === 'function'){
+      updateDashboardMetrics(metricsForDashboard);
+    } else {
+      setText('win-rate-value', (metricsForDashboard.WinRate*100).toFixed(0) + '%');
+      setText('drs-value', metricsForDashboard.ProfitFactor.toFixed(2));
+      setText('pole-positions-value', String(metricsForDashboard.OpenTrades));
+      setText('breakdown-value', (metricsForDashboard.MaxDrawdown*100).toFixed(1) + '%');
+      setGauge('cagr-gauge-value', (metricsForDashboard.CAGR*100).toFixed(1) + '%');
+      setGauge('sharpe-gauge-value', metricsForDashboard.Sharpe.toFixed(2));
+      setGauge('roi-gauge-value', (metricsForDashboard.ROI*100).toFixed(1) + '%');
+    }
+  }
+  function buildLlmSummary(m){
+    var perf = {
+      totalReturn: m.ROI, CAGR: m.CAGR, maxDD: m.MaxDrawdown,
+      startDate: null, endDate: null, days: m.Days
+    };
+    var tripStats = {
+      n: m.TripCount, wins: m.Wins, losses: m.Losses,
+      winRate: m.WinRate, profitFactor: m.ProfitFactor
+    };
+    var counts = { open: m.OpenPositions };
+    var meta = { basis: m.Basis || 'NET(Fuel) trip-level', equityStart: m.EquityStart, equityEnd: m.EquityEnd, days: m.Days };
+    window.DEBRIEF_SUMMARY = {
+      meta, counts, totals: {}, performance: perf,
+      topUnderlying: [], pnlByUnderlying: {}, byEntryDOW: {}, tripStats,
+      strategyStats: {}, marketContext: {}, equityCurvePreview: { head: [], tail: [] }
+    };
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    try {
+      updateTilesFromMetrics(METRICS);
+      buildLlmSummary(METRICS);
+      var statusEl = document.getElementById('debrief-status');
+      if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'âœ” Metrics loaded (embedded JSON).'; }
+      console.log('[F1] Embedded metrics applied.');
+    } catch(e) {
+      console.error('Embedded metrics init failed:', e);
+      alert('Embedded metrics init failed: ' + e.message);
+    }
+  });
+})();
+</script>
+<!-- === Metrics JSON Loader via GET DATA button === -->
+<input accept="application/json" id="metrics-json-file" style="display:none" type="file"/>
+<script>
+(function(){
+  function selectGetDataButton(){
+    // Try common IDs first
+    var btn = document.querySelector("#btn-get-data, #btnGetData, button#get-data");
+    if (btn) return btn;
+    // Fallback: find a button whose text contains "GET DATA"
+    var buttons = Array.from(document.querySelectorAll("button, .btn"));
+    for (var i=0;i<buttons.length;i++){
+      var t = (buttons[i].textContent || "").trim().toUpperCase();
+      if (t.indexOf("GET DATA") !== -1) return buttons[i];
+    }
+    return null;
+  }
+
+  function setText(id, text){
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+  function writeTiles(m){
+    var winRate = Number(m.WinRate)||0;
+    var pf = Number(m.ProfitFactor)||0;
+    var open = Number(m.OpenPositions)||0;
+    var mdd = Number(m.MaxDrawdown)||0;
+    var cagr = Number(m.CAGR)||0;
+    var sharpe = Number(m.Sharpe)||0;
+    var roi = Number(m.ROI)||0;
+
+    // If your page exposes updateDashboardMetrics, prefer it
+    if (typeof updateDashboardMetrics === 'function'){
+      updateDashboardMetrics({
+        WinRate: winRate, ProfitFactor: pf, OpenTrades: open,
+        MaxDrawdown: mdd, CAGR: cagr, Sharpe: sharpe, ROI: roi
+      });
+    } else {
+      setText('win-rate-value', (winRate*100).toFixed(0) + '%');
+      setText('drs-value', pf.toFixed(2));
+      setText('pole-positions-value', String(open));
+      setText('breakdown-value', (mdd*100).toFixed(1) + '%');
+      setText('cagr-gauge-value', (cagr*100).toFixed(1) + '%');
+      setText('sharpe-gauge-value', sharpe.toFixed(2));
+      setText('roi-gauge-value', (roi*100).toFixed(1) + '%');
+    }
+  }
+
+  function buildLlmSummary(m){
+    var perf = {
+      totalReturn: m.ROI, CAGR: m.CAGR, maxDD: m.MaxDrawdown,
+      startDate: null, endDate: null, days: m.Days
+    };
+    var tripStats = {
+      n: m.TripCount, wins: m.Wins, losses: m.Losses,
+      winRate: m.WinRate, profitFactor: m.ProfitFactor
+    };
+    var counts = { open: m.OpenPositions };
+    var meta = { basis: m.Basis || 'NET(Fuel) trip-level', equityStart: m.EquityStart, equityEnd: m.EquityEnd, days: m.Days };
+    return {
+      meta: meta, counts: counts, totals: {},
+      performance: perf, topUnderlying: [], pnlByUnderlying: {},
+      byEntryDOW: {}, tripStats: tripStats, strategyStats: {},
+      marketContext: {}, equityCurvePreview: { head: [], tail: [] }
+    };
+  }
+
+  function attachPicker(){
+    var btn = selectGetDataButton();
+    var inp = document.getElementById('metrics-json-file');
+    if (!btn || !inp) return;
+
+    btn.addEventListener('click', function(ev){
+      // Use the button as a loader for metrics JSON
+      ev.preventDefault();
+      ev.stopPropagation();
+      inp.value = '';
+      inp.click();
+    });
+
+    inp.addEventListener('change', function(){
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function(){
+        try {
+          var m = JSON.parse(reader.result);
+          // Basic validation
+          var req = ["WinRate","ProfitFactor","OpenPositions","MaxDrawdown","CAGR","Sharpe","ROI"];
+          for (var i=0;i<req.length;i++){
+            if (!(req[i] in m)) throw new Error("Missing field: " + req[i]);
+          }
+          window.METRICS = m; // store globally for reference
+          window.DEBRIEF_SUMMARY = buildLlmSummary(m);
+          writeTiles(m);
+          var statusEl = document.getElementById('debrief-status');
+          if (statusEl){ statusEl.style.display='block'; statusEl.textContent = 'âœ” Metrics loaded from selected JSON.'; }
+          console.log("[F1] Metrics loaded via GET DATA:", m);
+        } catch(e){
+          alert("Invalid metrics JSON: " + e.message);
+          console.error("Invalid metrics JSON", e);
+        }
+      };
+      reader.readAsText(f);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', attachPicker);
+})();
+</script>
+<script>
+(function(){
+  function robustParseJson(text){
+    var t = (text || "").trim();
+    if (t.startsWith("<")) throw new Error("The selected file appears to be HTML, not JSON.");
+    // Strip BOM
+    if (t.charCodeAt(0) === 0xFEFF) t = t.slice(1);
+    // Strip HTML comments
+    t = t.replace(/<!--[\s\S]*?-->/g, "");
+    // Strip /* */ block comments
+    t = t.replace(/\/\*[\s\S]*?\*\//g, "");
+    // Strip // line comments
+    t = t.split(/\r?\n/).map(function(line){ return line.replace(/^\s*\/\/.*$/, ""); }).join("\n");
+    return JSON.parse(t);
+  }
+
+  function selectGetDataButton(){
+    var btn = document.querySelector("#btn-get-data, #btnGetData, button#get-data");
+    if (btn) return btn;
+    var buttons = Array.from(document.querySelectorAll("button, .btn"));
+    for (var i=0;i<buttons.length;i++){
+      var t = (buttons[i].textContent || "").trim().toUpperCase();
+      if (t.indexOf("GET DATA") !== -1) return buttons[i];
+    }
+    return null;
+  }
+
+  function setText(id, text){ var el=document.getElementById(id); if (el) el.textContent = text; }
+  function writeTiles(m){
+    var winRate = Number(m.WinRate)||0;
+    var pf = Number(m.ProfitFactor)||0;
+    var open = Number(m.OpenPositions)||0;
+    var mdd = Number(m.MaxDrawdown)||0;
+    var cagr = Number(m.CAGR)||0;
+    var sharpe = Number(m.Sharpe)||0;
+    var roi = Number(m.ROI)||0;
+    if (typeof updateDashboardMetrics === 'function'){
+      updateDashboardMetrics({ WinRate: winRate, ProfitFactor: pf, OpenTrades: open, MaxDrawdown: mdd, CAGR: cagr, Sharpe: sharpe, ROI: roi });
+    } else {
+      setText('win-rate-value', (winRate*100).toFixed(0)+'%');
+      setText('drs-value', pf.toFixed(2));
+      setText('pole-positions-value', String(open));
+      setText('breakdown-value', (mdd*100).toFixed(1)+'%');
+      setText('cagr-gauge-value', (cagr*100).toFixed(1)+'%');
+      setText('sharpe-gauge-value', sharpe.toFixed(2));
+      setText('roi-gauge-value', (roi*100).toFixed(1)+'%');
+    }
+  }
+  function buildLlmSummary(m){
+    var perf = { totalReturn:m.ROI, CAGR:m.CAGR, maxDD:m.MaxDrawdown, startDate:null, endDate:null, days:m.Days };
+    var tripStats = { n:m.TripCount, wins:m.Wins, losses:m.Losses, winRate:m.WinRate, profitFactor:m.ProfitFactor };
+    var counts = { open:m.OpenPositions };
+    var meta = { basis:m.Basis||'NET(Fuel) trip-level', equityStart:m.EquityStart, equityEnd:m.EquityEnd, days:m.Days };
+    window.DEBRIEF_SUMMARY = { meta, counts, totals:{}, performance:perf, topUnderlying:[], pnlByUnderlying:{}, byEntryDOW:{}, tripStats, strategyStats:{}, marketContext:{}, equityCurvePreview:{ head:[], tail:[] } };
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var btn = selectGetDataButton();
+    var inp = document.getElementById('metrics-json-file');
+    if (!btn || !inp) return;
+    // Remove any previous click handlers by cloning
+    var newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+    newBtn.addEventListener('click', function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      inp.value=''; inp.click();
+    });
+    // Replace file change handler
+    var newInp = inp.cloneNode(true);
+    inp.parentNode.replaceChild(newInp, inp);
+    newInp.addEventListener('change', function(){
+      var f = newInp.files && newInp.files[0];
+      if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function(){
+        try {
+          var m = robustParseJson(reader.result);
+          var req = ["WinRate","ProfitFactor","OpenPositions","MaxDrawdown","CAGR","Sharpe","ROI"];
+          for (var i=0;i<req.length;i++){ if (!(req[i] in m)) throw new Error("Missing field: " + req[i]); }
+          window.METRICS = m; buildLlmSummary(m); writeTiles(m);
+          var statusEl = document.getElementById('debrief-status');
+          if (statusEl){ statusEl.style.display='block'; statusEl.textContent='âœ” Metrics loaded from selected JSON.'; }
+          console.log("[F1] Metrics loaded via GET DATA (robust).", m);
+        } catch(e){
+          alert("Invalid metrics JSON: " + e.message);
+          console.error("Invalid metrics JSON", e);
+        }
+      };
+      reader.readAsText(f);
+    });
+  });
+})();
+</script>
+<!-- ===== F1 Debrief + Unified GET DATA (safe append) â€” BEGIN ===== -->
+<script>
+(function(){
+  // --- Helpers ---
+  function coerceToDebriefSummary(m){
+    const perf = m.performance ?? {
+      totalReturn: m.ROI ?? null,
+      CAGR: m.CAGR ?? null,
+      maxDD: m.MaxDrawdown ?? null,
+      Sharpe: m.Sharpe ?? null,
+      Sortino: null, volatility: null, calmar: null, recoveryDays: null,
+      startDate: null, endDate: null, days: m.Days ?? null,
+    };
+    const trip = m.tripStats ?? {
+      n: m.TripCount ?? null,
+      wins: m.Wins ?? null,
+      losses: m.Losses ?? null,
+      winRate: (m.WinRate ?? null),
+      profitFactor: (m.ProfitFactor ?? null),
+      avgWin: m.avgWin ?? null,
+      avgLoss: m.avgLoss ?? null,
+      payoff: m.payoff ?? null,
+      expectancy: m.expectancy ?? null,
+      medianHold: m.medianHold ?? null,
+      maxConsecWins: m.maxConsecWins ?? null,
+      maxConsecLosses: m.maxConsecLosses ?? null
+    };
+    return {
+      meta: m.meta ?? { file: "", basis: "" },
+      counts: m.counts ?? { openTrips: m.OpenPositions ?? 0, closedTrips: m.TripCount ?? 0 },
+      totals: m.totals ?? { sumPos: m.SumPos ?? 0, sumAbsNeg: m.SumAbsNeg ?? 0, netPnl: null },
+      performance: perf,
+      tripStats: trip,
+      strategyStats: m.strategyStats ?? [],
+      pnlByUnderlying: m.pnlByUnderlying ?? {},
+      topUnderlying: m.topUnderlying ?? [],
+      timing: m.timing ?? { byEntryDOW: [], byMonth: [], byHoldBucket: [] },
+      fees: m.fees ?? {},
+      marketContext: m.marketContext ?? {},
+      equityCurvePreview: m.equityCurvePreview ?? { head: [], tail: [] }
+    };
+  }
+
+  function tilesFromSummary(m){
+    return {
+      WinRate:       m.WinRate       ?? m.tripStats?.winRate       ?? 0,
+      ProfitFactor:  m.ProfitFactor  ?? m.tripStats?.profitFactor  ?? 0,
+      OpenTrades:    m.OpenPositions ?? m.counts?.openTrips        ?? m.counts?.open ?? 0,
+      MaxDrawdown:   m.MaxDrawdown   ?? m.performance?.maxDD       ?? 0,
+      CAGR:          m.CAGR          ?? m.performance?.CAGR        ?? m.performance?.cagr ?? 0,
+      Sharpe:        m.Sharpe        ?? m.performance?.Sharpe      ?? m.performance?.sharpe ?? 0,
+      ROI:           m.ROI           ?? m.performance?.totalReturn ?? 0
+    };
+  }
+
+  function applyMetricsAndSummary(m){
+    const t = tilesFromSummary(m);
+    if (typeof updateDashboardMetrics === 'function') {
+      updateDashboardMetrics(t);
+    } else {
+      const pct = x => (x==null ? 'â€”' : (x*100).toFixed(1) + '%');
+      const n2  = x => (x==null ? 'â€”' : Number(x).toFixed(2));
+      const n0  = x => (x==null ? 'â€”' : String(x));
+      var el;
+      if ((el=document.getElementById('win-rate-value'))) el.textContent = pct(t.WinRate);
+      if ((el=document.getElementById('drs-value'))) el.textContent = n2(t.ProfitFactor);
+      if ((el=document.getElementById('pole-positions-value'))) el.textContent = n0(t.OpenTrades);
+      if ((el=document.getElementById('breakdown-value'))) el.textContent = pct(t.MaxDrawdown);
+      if ((el=document.getElementById('cagr-gauge-value'))) el.textContent = pct(t.CAGR);
+      if ((el=document.getElementById('sharpe-gauge-value'))) el.textContent = n2(t.Sharpe);
+      if ((el=document.getElementById('roi-gauge-value'))) el.textContent = pct(t.ROI);
+    }
+    window.DEBRIEF_SUMMARY = coerceToDebriefSummary(m);
+    var statusEl = document.getElementById('debriefStatus') || document.getElementById('debrief-status');
+    if (statusEl){ statusEl.style.display='block'; statusEl.textContent = 'Debrief ready.'; }
+    console.log('[F1] Debrief summary set from JSON.');
+  }
+
+  // --- Unified picker ---
+  document.addEventListener('DOMContentLoaded', function(){
+    var fileInput = document.getElementById('metrics-json-file') || document.getElementById('csvInput');
+    var btn = document.querySelector("#btn-get-data, #btnGetData, button#get-data") ||
+              Array.from(document.querySelectorAll("button, .btn")).find(b => (b.textContent||'').trim().toUpperCase().includes("GET DATA"));
+    if (!fileInput) { console.warn("[F1] No file input found for GET DATA."); return; }
+    // Accept json as well
+    try{
+      if (fileInput.accept && !fileInput.accept.includes(".json")) fileInput.accept += ",.json";
+    }catch(e){}
+
+    // If a button exists but not wired, wire it to open the picker.
+    if (btn){
+      btn.addEventListener('click', function(ev){
+        try { ev.preventDefault(); ev.stopPropagation(); } catch(e){}
+        fileInput.click();
+      });
+    }
+
+    // Handle JSON files ourselves; let CSV fall through to existing handlers.
+    fileInput.addEventListener('change', function(ev){
+      var f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      var isJson = /\.json$/i.test(f.name);
+      if (!isJson) {
+        // Let other listeners (CSV path) continue untouched.
+        return;
+      }
+      // JSON: stop other handlers and parse here
+      if (ev && ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+      if (ev && ev.preventDefault) ev.preventDefault();
+
+      var statusEl = document.getElementById('debriefStatus') || document.getElementById('debrief-status');
+      if (statusEl) { statusEl.style.display='block'; statusEl.textContent = 'Loading ' + f.name + '...'; }
+
+      var reader = new FileReader();
+      reader.onload = function(){
+        try{
+          var txt = String(reader.result||"");
+          // Tolerate stray Infinity/NaN if present
+          txt = txt.replace(/\b-?Infinity\b/g, "null").replace(/\bNaN\b/g, "null");
+          var m = JSON.parse(txt);
+          applyMetricsAndSummary(m);
+        }catch(e){
+          console.error("[F1] JSON parse error:", e);
+          alert("Invalid metrics JSON: " + e.message);
+          if (statusEl) statusEl.textContent = "Invalid metrics JSON";
+        }
+      };
+      reader.onerror = function(){ alert("Failed to read JSON file."); };
+      reader.readAsText(f);
+    }, true); // capture to intercept before other listeners
+  });
+})();
+</script>
+<!-- ===== F1 Debrief + Unified GET DATA (safe append) â€” END ===== -->
+<!-- ===== Ensure DEBRIEF_SUMMARY for GET INSIGHT (auto-restore) â€” BEGIN ===== -->
+<script>
+(function(){
+  function findGetInsightButtons(){
+    const candidates = [];
+    const ids = ['btn-get-insight','btnGetInsight','get-insight','btnInsights','btnPodium'];
+    ids.forEach(id => { const el = document.getElementById(id); if (el) candidates.push(el); });
+    // Also search by text content
+    Array.from(document.querySelectorAll('button, .btn, [role="button"]')).forEach(b => {
+      const t = (b.textContent||'').trim().toUpperCase();
+      if (t.includes('GET INSIGHT') || t.includes('GET INSIGHTS')) candidates.push(b);
+    });
+    return Array.from(new Set(candidates));
+  }
+
+  function setFromLocalStorage(){
+    try{
+      const raw = localStorage.getItem('f1_metrics_full');
+      if (!raw) return false;
+      // tolerate NaN/Infinity tokens in storage (shouldn't happen with sanitized JSON)
+      const txt = raw.replace(/\b-?Infinity\b/g, "null").replace(/\bNaN\b/g, "null");
+      const m = JSON.parse(txt);
+      if (!window.applyMetricsAndSummary) {
+        // fallback: only set DEBRIEF_SUMMARY if the helper is missing
+        if (typeof coerceToDebriefSummary === 'function') {
+          window.DEBRIEF_SUMMARY = coerceToDebriefSummary(m);
+        } else {
+          window.DEBRIEF_SUMMARY = m; // best-effort
+        }
+      } else {
+        // also refresh tiles so UI stays in sync
+        window.applyMetricsAndSummary(m);
+      }
+      console.log("[F1] Restored DEBRIEF_SUMMARY from localStorage.");
+      return true;
+    }catch(e){
+      console.warn("[F1] Failed to restore summary from localStorage:", e);
+      return false;
+    }
+  }
+
+  function ensureSummary(){
+    if (window.DEBRIEF_SUMMARY) return true;
+    return setFromLocalStorage();
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    // 1) Save JSON whenever we load it via applyMetricsAndSummary
+    if (typeof window.applyMetricsAndSummary === 'function'){
+      const orig = window.applyMetricsAndSummary;
+      window.applyMetricsAndSummary = function(m){
+        try {
+          localStorage.setItem('f1_metrics_full', JSON.stringify(m));
+        } catch(e){ console.warn("[F1] Couldn't cache metrics JSON:", e); }
+        return orig(m);
+      };
+    }
+
+    // 2) Hook GET INSIGHT clicks to auto-ensure the summary exists
+    const wire = () => {
+      findGetInsightButtons().forEach(btn => {
+        if (btn.__f1_wired) return;
+        btn.addEventListener('click', function(){ ensureSummary(); }, true); // capture: run before other handlers
+        btn.__f1_wired = true;
+      });
+    };
+    wire();
+    // also re-run wiring after small delay in case the button renders late
+    setTimeout(wire, 500);
+    setTimeout(wire, 1500);
+  });
+})();
+</script>
+<!-- ===== Ensure DEBRIEF_SUMMARY for GET INSIGHT (auto-restore) â€” END ===== -->
+<!-- ===== Debrief Summary Glue (aliases + events + persistence) â€” BEGIN ===== -->
+<script>
+(function(){
+  function safeParse(txt){
+    try{
+      txt = String(txt||"").replace(/\b-?Infinity\b/g, "null").replace(/\bNaN\b/g, "null");
+      return JSON.parse(txt);
+    }catch(e){ return null; }
+  }
+  function setDebriefSummary(m){
+    if (!m || typeof m !== 'object') return false;
+    // Primary
+    window.DEBRIEF_SUMMARY = m;
+    // Aliases some code might be using
+    window.debriefSummary = m;
+    window.__DEBRIEF = m;
+    window.SUMMARY = m;
+    try{
+      localStorage.setItem('f1_metrics_full', JSON.stringify(m));
+      sessionStorage.setItem('f1_metrics_full', JSON.stringify(m));
+    }catch(e){}
+    try{
+      // Drop a copy into a data attr for ultra-legacy readers
+      document.body.setAttribute('data-debrief-summary', 'ready');
+    }catch(e){}
+    // Broadcast
+    try{
+      document.dispatchEvent(new CustomEvent('debrief:summary-ready', {detail:{ok:true}}));
+      window.dispatchEvent(new CustomEvent('debrief:summary-ready', {detail:{ok:true}}));
+    }catch(e){}
+    return true;
+  }
+  function getDebriefSummary(){
+    if (window.DEBRIEF_SUMMARY) return window.DEBRIEF_SUMMARY;
+    var raw = localStorage.getItem('f1_metrics_full') || sessionStorage.getItem('f1_metrics_full');
+    var obj = safeParse(raw);
+    if (obj){ setDebriefSummary(obj); return obj; }
+    return null;
+  }
+  // Expose helpers
+  window.setDebriefSummary = setDebriefSummary;
+  window.getDebriefSummary = getDebriefSummary;
+
+  // Patch applyMetricsAndSummary to always call setDebriefSummary
+  if (typeof window.applyMetricsAndSummary === 'function'){
+    const _orig = window.applyMetricsAndSummary;
+    window.applyMetricsAndSummary = function(m){
+      setDebriefSummary(m);
+      return _orig(m);
+    };
+  }else{
+    // If defined later, patch after load
+    window.addEventListener('load', function(){
+      if (typeof window.applyMetricsAndSummary === 'function' && !window.applyMetricsAndSummary.__f1_patched){
+        const _o = window.applyMetricsAndSummary;
+        window.applyMetricsAndSummary = function(m){ setDebriefSummary(m); return _o(m); };
+        window.applyMetricsAndSummary.__f1_patched = true;
+      }
+    });
+  }
+
+  // Wire "Confirm Analysis" / "GET INSIGHT" buttons to ensure summary exists right before use
+  function wireEnsureOnClick(){
+    const candidates = [];
+    const ids = ['btn-confirm-analysis','confirm-analysis','confirmAnalysis','btn-get-insight','btnGetInsight','get-insight','btnInsights','btnPodium'];
+    ids.forEach(id => { const el = document.getElementById(id); if (el) candidates.push(el); });
+    Array.from(document.querySelectorAll('button, .btn, [role="button"]')).forEach(b => {
+      const t = (b.textContent||'').trim().toUpperCase();
+      if (t.includes('CONFIRM ANALYSIS') || t.includes('GET INSIGHT') || t.includes('GET INSIGHTS')) candidates.push(b);
+    });
+    Array.from(new Set(candidates)).forEach(btn => {
+      if (btn.__f1_summary_wired) return;
+      btn.addEventListener('click', function(){ 
+        const ok = !!getDebriefSummary();
+        if (!ok) console.warn('[F1] No summary in memory; ask user to GET DATA.');
+      }, true);
+      btn.__f1_summary_wired = true;
+    });
+  }
+  document.addEventListener('DOMContentLoaded', wireEnsureOnClick);
+  setTimeout(wireEnsureOnClick, 500);
+  setTimeout(wireEnsureOnClick, 1500);
+})();
+</script>
+<!-- ===== Debrief Summary Glue â€” END ===== -->
+<!-- ===== Debrief Failsafe Loader â€” BEGIN ===== -->
+<input accept=".json" id="debrief-json-fallback" style="display:none" type="file"/>
+<script>
+(function(){
+  function safeParseJSON(txt){
+    try{
+      return JSON.parse(String(txt||'').replace(/\b-?Infinity\b/g,'null').replace(/\bNaN\b/g,'null'));
+    }catch(e){ return null; }
+  }
+  function storeSummary(obj){
+    if (!obj || typeof obj !== 'object') return false;
+    window.DEBRIEF_SUMMARY = obj;
+    try{
+      localStorage.setItem('f1_metrics_full', JSON.stringify(obj));
+      sessionStorage.setItem('f1_metrics_full', JSON.stringify(obj));
+    }catch(e){}
+    document.dispatchEvent(new CustomEvent('debrief:summary-ready',{detail:{ok:true}}));
+    return true;
+  }
+  function attemptRestore(){
+    if (window.DEBRIEF_SUMMARY) return true;
+    var raw = localStorage.getItem('f1_metrics_full') || sessionStorage.getItem('f1_metrics_full');
+    var obj = safeParseJSON(raw);
+    if (obj){ storeSummary(obj); return true; }
+    return false;
+  }
+  function fromMetricsJSON(j){
+    // Accept either full summary or a metrics wrapper; choose best-guess field.
+    if (!j) return null;
+    if (j.meta && j.performance) return j; // already a summary-like object
+    if (j.llmSummary && j.llmSummary.meta) return j.llmSummary;
+    if (j.summary && j.summary.meta) return j.summary;
+    if (j.metrics && j.metrics.summary) return j.metrics.summary;
+    // last resort: wrap the whole thing
+    return { meta:{source:'metrics_json_fallback'}, raw:j };
+  }
+
+  // Public: ensure summary exists. If not, trigger JSON picker.
+  window.ensureDebriefSummary = function thenRun(next){
+    if (attemptRestore() || window.DEBRIEF_SUMMARY){
+      try{ next && next(window.DEBRIEF_SUMMARY); }catch(e){}
+      return;
+    }
+    var input = document.getElementById('debrief-json-fallback');
+    if (!input){
+      alert('Missing JSON loader input.'); 
+      return;
+    }
+    function onPick(){
+      input.removeEventListener('change', onPick);
+      var f = input.files && input.files[0];
+      if (!f){ alert('No file selected.'); return; }
+      var r = new FileReader();
+      r.onload = function(){
+        var obj = fromMetricsJSON(safeParseJSON(r.result));
+        if (!obj){ alert('Invalid metrics JSON.'); return; }
+        storeSummary(obj);
+        try{ next && next(obj); }catch(e){}
+      };
+      r.readAsText(f);
+    }
+    input.value = '';
+    input.addEventListener('change', onPick);
+    input.click();
+  };
+
+  // Wire into Confirm flow: intercept the moment we are about to call runLLMAnalysis
+  window.addEventListener('DOMContentLoaded', function(){
+    var keyModal = document.getElementById('keyModal');
+    var confirmModal = document.getElementById('confirmModal');
+    var apiInput = keyModal ? (keyModal.querySelector('#apiKeyField') || keyModal.querySelector('input[type="password"]') || keyModal.querySelector('input[type="text"]')) : null;
+    var btnYes = document.getElementById('btnConfirmYes');
+
+    if (btnYes && !btnYes.__f1_wired){
+      btnYes.__f1_wired = true;
+      btnYes.addEventListener('click', function(ev){
+        ev.preventDefault();
+        function go(summary){
+          try{
+            if (window.runLLMAnalysis){
+              window.runLLMAnalysis(summary, window.OPENAI_API_KEY || (apiInput? apiInput.value : ''));
+            } else {
+              console.warn('[F1] runLLMAnalysis not defined');
+            }
+          }catch(e){ console.error('[F1] runLLMAnalysis error:', e); }
+        }
+        if (window.DEBRIEF_SUMMARY){
+          go(window.DEBRIEF_SUMMARY);
+        }else{
+          window.ensureDebriefSummary(go);
+        }
+      }, true);
+    }
+  });
+})();
+</script>
+<!-- ===== Debrief Failsafe Loader â€” END ===== -->
+<!-- ===== Debrief Summary Normalizer (ensures meta.rowCount) â€” BEGIN ===== -->
+<script>
+(function(){
+  function normalizeSummary(obj){
+    if (!obj || typeof obj !== 'object') return obj;
+    obj.meta = obj.meta || {};
+    // derive a sensible rowCount for legacy checks
+    var rc = obj.meta.rowCount;
+    if (rc == null) {
+      var derived = null;
+      // from FULL schema
+      if (typeof obj.meta.rows === 'number') derived = obj.meta.rows;
+      // fallback from counts (rows about open/closed rows if present)
+      if (derived == null && obj.counts && typeof obj.counts.openRows === 'number' && typeof obj.counts.closedRows === 'number'){
+        derived = obj.counts.openRows + obj.counts.closedRows;
+      }
+      // last resort from tripStats (not exact rows, but enough to pass >0 gate)
+      if (derived == null && obj.tripStats && typeof obj.tripStats.n === 'number'){
+        derived = obj.tripStats.n;
+      }
+      obj.meta.rowCount = derived != null ? derived : 0;
+    }
+    return obj;
+  }
+  // expose
+  window.__normalizeDebriefSummary = normalizeSummary;
+
+  // wrap existing setters
+  if (typeof window.setDebriefSummary === 'function'){
+    const _orig = window.setDebriefSummary;
+    window.setDebriefSummary = function(m){ return _orig(normalizeSummary(m)); };
+  }
+  if (typeof window.applyMetricsAndSummary === 'function'){
+    const _orig2 = window.applyMetricsAndSummary;
+    window.applyMetricsAndSummary = function(m){ return _orig2(normalizeSummary(m)); };
+  }
+  // On load, normalize any existing
+  if (window.DEBRIEF_SUMMARY) window.DEBRIEF_SUMMARY = normalizeSummary(window.DEBRIEF_SUMMARY);
+  document.addEventListener('debrief:summary-ready', function(){
+    if (window.DEBRIEF_SUMMARY) window.DEBRIEF_SUMMARY = normalizeSummary(window.DEBRIEF_SUMMARY);
+  });
+})();
+</script>
+<!-- ===== Debrief Summary Normalizer â€” END ===== -->
+<!-- ===== Initialize Dashboard metrics to zero until GET DATA loads JSON â€” BEGIN ===== -->
+<script>
+(function(){
+  function zeroifyTiles(){
+    // helper formatters
+    const pct = x => (x==null ? '0.0%' : (Number(x)*100).toFixed(1) + '%');
+    const n2  = x => (x==null ? '0.00' : Number(x).toFixed(2));
+    const n0  = x => (x==null ? '0' : String(x));
+
+    var el;
+    if ((el=document.getElementById('win-rate-value'))) el.textContent = pct(0);
+    if ((el=document.getElementById('drs-value'))) el.textContent = n2(0);
+    if ((el=document.getElementById('pole-positions-value'))) el.textContent = n0(0);
+    if ((el=document.getElementById('breakdown-value'))) el.textContent = pct(0);
+    if ((el=document.getElementById('cagr-gauge-value'))) el.textContent = pct(0);
+    if ((el=document.getElementById('sharpe-gauge-value'))) el.textContent = n2(0);
+    if ((el=document.getElementById('roi-gauge-value'))) el.textContent = pct(0);
+
+    // If your gauges use specific APIs, call their setters here as well, e.g.:
+    // window.updateCagrGauge && window.updateCagrGauge(0);
+    // window.updateSharpeGauge && window.updateSharpeGauge(0);
+    // window.updateRoiGauge && window.updateRoiGauge(0);
+  }
+
+  // Expose a manual reset if needed
+  window.resetDashboardMetrics = zeroifyTiles;
+
+  // Run once on load so the UI starts at zero
+  document.addEventListener('DOMContentLoaded', function(){
+    try { zeroifyTiles(); } catch(e){ console.warn('[F1] zero init failed:', e); }
+  });
+})();
+</script>
+<!-- ===== Initialize Dashboard metrics to zero â€” END ===== -->
+<!-- ===== GET DATA Double-Open Guard + First-Select Summary Set â€” BEGIN ===== -->
+<script>
+(function(){
+  // Re-usable guard to block re-entrant .click() on <input type="file">
+  function guardFileClick(el){
+    if (!el || typeof el.click !== 'function') return;
+    if (el.__f1_click_guarded) return;
+    const orig = el.click;
+    let busy = false;
+    el.click = function(){
+      if (busy) { console.warn('[F1] file dialog re-entrant click blocked'); return; }
+      busy = true;
+      setTimeout(()=>busy=false, 1200); // guard window
+      return orig.apply(el, arguments);
+    };
+    el.__f1_click_guarded = true;
+  }
+
+  function safeParse(txt){
+    try{
+      txt = String(txt||"").replace(/\b-?Infinity\b/g,'null').replace(/\bNaN\b/g,'null');
+      return JSON.parse(txt);
+    }catch(e){ return null; }
+  }
+  function setSummary(m){
+    if (!m) return false;
+    // prefer our normalizer if present
+    if (typeof window.__normalizeDebriefSummary === 'function'){
+      m = window.__normalizeDebriefSummary(m);
+    } else if (m.meta && m.meta.rows != null && (m.meta.rowCount == null)) {
+      m.meta.rowCount = m.meta.rows;
+    }
+    window.DEBRIEF_SUMMARY = m;
+    try{
+      localStorage.setItem('f1_metrics_full', JSON.stringify(m));
+      sessionStorage.setItem('f1_metrics_full', JSON.stringify(m));
+    }catch(e){}
+    try{
+      document.dispatchEvent(new CustomEvent('debrief:summary-ready', {detail:{ok:true}}));
+    }catch(e){}
+    return true;
+  }
+  function applyAndSet(m){
+    try{
+      if (typeof window.applyMetricsAndSummary === 'function'){
+        window.applyMetricsAndSummary(m);
+      } else {
+        setSummary(m);
+      }
+    }catch(e){
+      console.warn('[F1] applyMetricsAndSummary failed, falling back to setSummary:', e);
+      setSummary(m);
+    }
+  }
+
+  // Wire once after DOM ready
+  document.addEventListener('DOMContentLoaded', function(){
+    var fileInput = document.getElementById('metrics-json-file') || document.getElementById('csvInput');
+    var btn = document.querySelector("#btn-get-data, #btnGetData, button#get-data") ||
+              Array.from(document.querySelectorAll("button, .btn")).find(b => (b.textContent||'').trim().toUpperCase().includes("GET DATA"));
+
+    if (!fileInput) return;
+    guardFileClick(fileInput);
+
+    // Global guard to prevent second-open chain
+    window.__F1_FILE_DIALOG_OPEN = false;
+
+    // Harden any GET DATA button to not double-open
+    if (btn && !btn.__f1_guarded){
+      const origHandler = function(ev){
+        // If a file dialog is already in progress, do nothing
+        if (window.__F1_FILE_DIALOG_OPEN) { ev && ev.preventDefault && ev.preventDefault(); return; }
+        window.__F1_FILE_DIALOG_OPEN = true;
+        // allow default handler to open dialog; release flag after some time
+        setTimeout(()=>{ window.__F1_FILE_DIALOG_OPEN = false; }, 1500);
+      };
+      btn.addEventListener('click', origHandler, true); // capture before others
+      btn.__f1_guarded = true;
+    }
+
+    // Intercept JSON selection in capture phase; stop other 'change' listeners firing a second dialog
+    if (!fileInput.__f1_json_capture){
+      fileInput.addEventListener('change', function(ev){
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        var isJson = /\.json$/i.test(f.name);
+        if (!isJson) return; // let CSV fall through
+
+        // Stop other change handlers from re-opening a second dialog
+        if (ev && ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+        if (ev && ev.preventDefault) ev.preventDefault();
+
+        // Parse JSON and set summary immediately (so Debrief can run even if another dialog appears/cancelled)
+        var reader = new FileReader();
+        reader.onload = function(){
+          var obj = safeParse(reader.result);
+          if (!obj){
+            alert('Invalid metrics JSON.');
+            return;
+          }
+          applyAndSet(obj); // updates tiles and sets DEBRIEF_SUMMARY
+          console.log('[F1] Metrics JSON applied after first selection.');
+        };
+        reader.readAsText(f);
+      }, true); // capture
+      fileInput.__f1_json_capture = true;
+    }
+  });
+})();
+</script>
+<!-- ===== GET DATA Double-Open Guard â€” END ===== -->
+<!-- ===== Unified GET DATA Loader (replaces existing listeners) â€” BEGIN ===== -->
+<script>
+(function(){
+  function safeParse(txt){
+    try{
+      return JSON.parse(String(txt||'').replace(/\b-?Infinity\b/g,'null').replace(/\bNaN\b/g,'null'));
+    }catch(e){ return null; }
+  }
+  function applySummary(m){
+    // prefer built-in apply if present, else fallback to set globals & simple text
+    if (typeof window.applyMetricsAndSummary === 'function'){
+      window.applyMetricsAndSummary(m);
+    } else {
+      window.DEBRIEF_SUMMARY = m;
+      // minimal UI update
+      const t = {
+        WinRate:       m.WinRate       ?? m.tripStats?.winRate       ?? 0,
+        ProfitFactor:  m.ProfitFactor  ?? m.tripStats?.profitFactor  ?? 0,
+        OpenTrades:    m.OpenPositions ?? m.counts?.openTrips        ?? 0,
+        MaxDrawdown:   m.MaxDrawdown   ?? m.performance?.maxDD       ?? 0,
+        CAGR:          m.CAGR          ?? m.performance?.CAGR        ?? 0,
+        Sharpe:        m.Sharpe        ?? m.performance?.Sharpe      ?? 0,
+        ROI:           m.ROI           ?? m.performance?.totalReturn ?? 0
+      };
+      const pct = x => (x==null ? 'â€”' : (x*100).toFixed(1) + '%');
+      const n2  = x => (x==null ? 'â€”' : Number(x).toFixed(2));
+      const n0  = x => (x==null ? 'â€”' : String(x));
+      var el;
+      if ((el=document.getElementById('win-rate-value'))) el.textContent = pct(t.WinRate);
+      if ((el=document.getElementById('drs-value'))) el.textContent = n2(t.ProfitFactor);
+      if ((el=document.getElementById('pole-positions-value'))) el.textContent = n0(t.OpenTrades);
+      if ((el=document.getElementById('breakdown-value'))) el.textContent = pct(t.MaxDrawdown);
+      if ((el=document.getElementById('cagr-gauge-value'))) el.textContent = pct(t.CAGR);
+      if ((el=document.getElementById('sharpe-gauge-value'))) el.textContent = n2(t.Sharpe);
+      if ((el=document.getElementById('roi-gauge-value'))) el.textContent = pct(t.ROI);
+    }
+    try{
+      // normalize and set multiple aliases for Debrief
+      if (typeof window.__normalizeDebriefSummary === 'function'){
+        m = window.__normalizeDebriefSummary(m);
+      } else if (m.meta && m.meta.rows != null && (m.meta.rowCount == null)) {
+        m.meta.rowCount = m.meta.rows;
+      }
+      window.DEBRIEF_SUMMARY = m;
+      window.debriefSummary = m;
+      window.__DEBRIEF = m;
+      window.SUMMARY = m;
+      localStorage.setItem('f1_metrics_full', JSON.stringify(m));
+      sessionStorage.setItem('f1_metrics_full', JSON.stringify(m));
+      document.dispatchEvent(new CustomEvent('debrief:summary-ready', {detail:{ok:true}}));
+    }catch(e){}
+  }
+
+  function parseCSVAndSummarize(rows, fields){
+    // If the page already has summarizeRows, use it to keep behavior parity
+    if (typeof window.summarizeRows === 'function'){
+      var startingCapital = 10000;
+      var detailedSummary = window.summarizeRows(rows, fields, startingCapital, '');
+      // Map to dashboard tiles
+      const metricsForDashboard = {
+        CAGR: detailedSummary.performance.cagr,
+        Sharpe: detailedSummary.performance.sharpe_event,
+        ROI: detailedSummary.performance.totalReturn,
+        MaxDrawdown: detailedSummary.performance.maxDD,
+        WinRate: detailedSummary.tripStats.winRate,
+        ProfitFactor: detailedSummary.tripStats.profitFactor,
+        OpenTrades: detailedSummary.counts.open
+      };
+      if (typeof window.updateDashboardMetrics === 'function'){
+        window.updateDashboardMetrics(metricsForDashboard);
+      }
+      const summaryForLlm = {
+        meta: detailedSummary.meta,
+        counts: detailedSummary.counts,
+        totals: detailedSummary.totals,
+        performance: detailedSummary.performance,
+        topUnderlying: detailedSummary.topUnderlying,
+        pnlByUnderlying: detailedSummary.pnlByUnderlying,
+        timing: { byEntryDOW: detailedSummary.byEntryDOW, byMonth: detailedSummary.byMonth },
+        tripStats: detailedSummary.tripStats,
+        strategyStats: detailedSummary.strategyStats,
+        marketContext: detailedSummary.marketContext,
+        equityCurvePreview: { 
+          head: (detailedSummary.equityCurveDaily || []).slice(0,3),
+          tail: (detailedSummary.equityCurveDaily || []).slice(-3)
+        }
+      };
+      applySummary(summaryForLlm);
+      return true;
+    }else{
+      alert("CSV flow not available in this build. Please load JSON.");
+      return false;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    // Find elements
+    var fileInput = document.getElementById('metrics-json-file') || document.getElementById('csvInput');
+    var btn = document.querySelector("#btn-get-data, #btnGetData, button#get-data") ||
+              Array.from(document.querySelectorAll("button, .btn")).find(b => (b.textContent||'').trim().toUpperCase().includes("GET DATA"));
+    if (!fileInput) return;
+    // Replace input and button with clones to remove any existing listeners
+    var newInput = fileInput.cloneNode(true);
+    newInput.id = fileInput.id || 'csvInput';
+    // ensure accept includes both
+    try {
+      if (!newInput.accept || !/json/i.test(newInput.accept)) newInput.accept = ".json,.csv";
+    } catch(e){}
+    fileInput.parentNode.replaceChild(newInput, fileInput);
+
+    if (btn){
+      var newBtn = btn.cloneNode(true);
+      // preserve id and text
+      newBtn.id = btn.id || 'btnGetData';
+      btn.parentNode.replaceChild(newBtn, btn);
+      btn = newBtn;
+    }
+
+    // Single source of truth: our handlers only
+    btn && btn.addEventListener('click', function(ev){
+      ev.preventDefault();
+      newInput.value = ""; // reset to allow re-select
+      newInput.click();
+    });
+
+    newInput.addEventListener('change', function(ev){
+      var f = newInput.files && newInput.files[0];
+      if (!f) return;
+      if (/\.json$/i.test(f.name)){
+        var r = new FileReader();
+        r.onload = function(){ 
+          var m = safeParse(r.result);
+          if (!m){ alert("Invalid metrics JSON."); return; }
+          applySummary(m);
+          const statusEl = document.getElementById('debriefStatus') || document.getElementById('debrief-status');
+          if (statusEl){ statusEl.style.display='block'; statusEl.textContent = 'Debrief ready.'; }
+        };
+        r.readAsText(f);
+      } else if (/\.csv$/i.test(f.name)){
+        if (!window.Papa){
+          alert("CSV parser missing (PapaParse). Please load JSON instead.");
+          return;
+        }
+        Papa.parse(f, {
+          header: true,
+          dynamicTyping: false,
+          skipEmptyLines: true,
+          complete: function(results){
+            try{
+              var rows = results.data || [];
+              var fields = results.meta && results.meta.fields || Object.keys(rows[0]||{});
+              parseCSVAndSummarize(rows, fields);
+            }catch(e){
+              console.error("[F1] CSV summarize error:", e);
+              alert("Failed to summarize CSV: " + e.message);
+            }
+          },
+          error: function(err){ alert("CSV parse error: " + err); }
+        });
+      } else {
+        alert("Please select a .json or .csv file.");
+      }
+    });
+  });
+})();
+</script>
+<!-- ===== Unified GET DATA Loader â€” END ===== -->
+<!-- F1 Live â€” Nonâ€‘destructive JSON wiring (keeps the rest of Dashboard intact) -->
+<script>
+(function(){
+  if (window.__F1_SAFE_WIRE__) return; window.__F1_SAFE_WIRE__=true;
+
+  // Official anchors already in your Dashboard
+  const TBODY_SEL  = "#live-table tbody";
+  const MINIS_SEL  = "#live-widgets";
+  const STATUS_SEL = "#live-status";
+
+  const $ = s=>document.querySelector(s);
+  const fmt=(n,d=2)=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):'â€”';
+  const money=n=>Number.isFinite(+n)?((n<0?'-':'')+'$'+Math.abs(+n).toFixed(2)):'â€”';
+  const parseN=x=>{const n=parseFloat(x);return Number.isFinite(n)?n:NaN;};
+
+  // Load TradingView once
+  (function ensureTV(){ if (window.TradingView) return; const s=document.createElement('script'); s.src="https://s3.tradingview.com/tv.js"; s.async=true; document.head.appendChild(s); })();
+  function normalizeTv(sym){
+    if(!sym) return sym;
+    try{
+      const parts=String(sym).split(':'), ex=(parts[0]||'NASDAQ').toUpperCase(), tk=(parts[1]||parts[0]).toUpperCase().trim();
+      if (tk==='SOXL') return 'AMEX:SOXL';
+      if (tk==='SPX'||tk==='SPXW') return 'SP:SPX';
+      if (tk==='NDX') return 'NASDAQ:NDX';
+      if (tk==='RUT') return 'INDEX:RUT';
+      if (ex==='NYSEARCA'||ex==='ARCA') return 'AMEX:'+tk;
+      return ex+':'+tk;
+    }catch(e){ return sym; }
+  }
+  function addTVMini(container, tvSymbol){
+    if (!container || !tvSymbol) return;
+    function spawn(){
+      if (!window.TradingView || !window.TradingView.widget) return setTimeout(spawn, 250);
+      const host=document.createElement('div'); const id='tv_'+Math.random().toString(36).slice(2);
+      host.id=id; host.style.width='100%'; host.style.height='150px'; container.appendChild(host);
+      try{
+        new TradingView.widget({symbol:normalizeTv(tvSymbol), autosize:true, interval:"D", timezone:"Etc/UTC", theme:"dark", style:"2",
+                                hide_top_toolbar:true, hide_legend:true, withdateranges:false, range:"12M",
+                                enable_publishing:false, container_id:id, toolbar_bg:"rgba(0,0,0,0)"});
+      }catch(e){ console.warn("[F1] TV mini failed:", tvSymbol, e); }
+    }
+    spawn();
+  }
+
+  function lastBiz(){ const d=new Date(); d.setDate(d.getDate()-1); while([0,6].includes(d.getDay())) d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
+
+  async function fetchStock(sym, key){
+    const u=`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ return NaN; }
+    const g=j && (j["Global Quote"]||j.globalQuote||j["global quote"]); if (!g) return NaN;
+    const price = g["05. price"]||g.price||g["05. Price"];
+    const prev  = g["08. previous close"]||g.previousClose;
+    const last  = parseN(price), prevC=parseN(prev);
+    return Number.isFinite(last)?last:(Number.isFinite(prevC)?prevC:NaN);
+  }
+  async function fetchOpt(occ,key,date){
+    try{
+      const u1=`https://www.alphavantage.co/query?function=OPTION_PRICE&symbol=${encodeURIComponent(occ)}&apikey=${encodeURIComponent(key)}`;
+      const r1=await fetch(u1); const t1=await r1.text(); let j1={}; try{ j1=JSON.parse(t1);}catch(e){}
+      const cands=[j1.mark, j1.last, (j1.bid&&j1.ask? (Number(j1.bid)+Number(j1.ask))/2 : null)].map(parseN);
+      const v=cands.find(Number.isFinite); if (Number.isFinite(v)) return v;
+    }catch(e){}
+    const root=occ.slice(0,-15);
+    const u=`https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol=${encodeURIComponent(root)&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ return NaN; }
+    const hit=((j&&j.data)||[]).find(c=>String(c.contractID).toUpperCase().replace(/\s/g,'')===occ);
+    if(!hit) return NaN;
+    const seq=[hit.mark,hit.last,(hit.bid&&hit.ask?(Number(hit.bid)+Number(hit.ask))/2:null)].map(parseN);
+    const v=seq.find(Number.isFinite); return Number.isFinite(v)?v:NaN;
+  }
+  function computePL(avg,last,qty,mult){ if(![avg,last,qty,mult].every(Number.isFinite)) return NaN; return (last-avg)*qty*mult; }
+
+  async function renderF1(metrics){
+    const tbody=$(TBODY_SEL), minis=$(MINIS_SEL), status=$(STATUS_SEL);
+    if (!tbody || !minis) { console.warn("[F1] anchors missing â€” no changes"); return; }
+    if (status) status.textContent='Loading open positionsâ€¦';
+
+    const f1=(metrics&&metrics.F1)||{};
+    const pos= Array.isArray(f1.openPositions)? f1.openPositions : (metrics.openPositions||[]);
+    const tvMap = metrics.tvSymbols || f1.tvSymbols || {};
+    const qMap  = metrics.quoteSymbols || f1.quoteSymbols || {};
+
+    // Only clear *inside* the F1 table & minis, never touch other sections
+    tbody.innerHTML=''; if (minis) minis.innerHTML='';
+
+    if (!pos.length){ tbody.innerHTML='<tr><td colspan="6">No open positions</td></tr>'; if(status) status.textContent='No open positions in JSON.'; return; }
+
+    const rows=[];
+    pos.forEach(p=>{
+      const sym=p.symbol||p.underlying||'';
+      const type=p.assetType || (p.occId?'option':'stock');
+      const qty=Number(p.qty)||0;
+      const avg=Number(p.avgPrice);
+      const mult=Number(p.multiplier)|| (type==='option'?100:1);
+      const tv = p.tvSymbol || tvMap[sym] || '';
+      const quote = type==='option' ? (p.occId||'') : (p.quoteSymbol || qMap[sym] || '');
+
+      const tr=document.createElement('tr');
+      tr.innerHTML = `
+        <td>${p.symbol}</td>
+        <td>${fmt(Number(p.qty), 4)}</td>
+        <td>${fmt(+p.avgPrice,2)}</td>
+        <td class="last">â€”</td>
+        <td class="pl">â€”</td>
+        <td class="pct">â€”</td>
+      `;
+      tbody.appendChild(tr);
+      if (tv) addTVMini(minis, tv);
+      rows.push({type, quote, tr, avg, qty, mult});
+    });
+
+    const key = localStorage.getItem('alphaVantageKey') || localStorage.getItem('av_api_key') || '';
+    if (!key){ if(status) status.textContent='Enter/save Alpha Vantage key, then click Refresh Prices.'; return; }
+    // Removed date parameter (uses most recent data)
+
+    // De-dupe external calls
+    const groups=new Map();
+    rows.forEach(r=>{ const k=r.type+':'+r.quote; if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); });
+    let i=0;
+    for (const [k, arr] of groups){
+      i++; if(status) status.textContent = `Car ${i}/${groups.size}`;
+      const [kind,id]=k.split(':'); if(!id) continue;
+      let last=NaN;
+      try{ last=(kind==='option')? await fetchOpt(id,key) : await fetchStock(id,key); }catch(e){}
+      if (Number.isFinite(last)){
+        arr.forEach(w=>{
+          const lastTd=w.tr.querySelector('.last'), plTd=w.tr.querySelector('.pl'), pctTd=w.tr.querySelector('.pct');
+          if (lastTd) lastTd.textContent = fmt(last,2);
+          const pl = computePL(w.avg,last,w.qty,w.mult);
+          if (plTd){ plTd.textContent = money(pl); plTd.classList.remove('pos','neg'); plTd.classList.add(pl>=0?'pos':'neg'); }
+          if (pctTd){ const pct=(Number.isFinite(w.avg)&&w.avg>0)? ((last/w.avg-1)*100):NaN; pctTd.textContent = Number.isFinite(pct)? pct.toFixed(2)+'%':'â€”'; }
+        });
+      }
+      await new Promise(r=>setTimeout(r, 1200));
+    }
+    if (status) status.textContent='Completed.';
+  }
+
+  // Add a tiny loader button into the F1 status line (optional)
+  function addInlineLoader(){
+    const status = $(STATUS_SEL); if (!status) return;
+    const btn = document.createElement('button');
+    btn.textContent = "Load metrics JSON";
+    btn.style.marginLeft = "8px"; btn.style.padding = "6px 10px";
+    btn.style.borderRadius = "8px"; btn.style.border = "1px solid #2e3b4a";
+    btn.style.background = "rgba(255,255,255,0.05)"; btn.style.color = "inherit";
+    btn.addEventListener('click', ()=>{
+      const pick = document.createElement('input');
+      pick.type='file'; pick.accept='.json,application/json'; pick.style.display='none';
+      pick.addEventListener('change', ()=>{
+        const f = pick.files && pick.files[0]; if (!f) return;
+        const r = new FileReader();
+        r.onload = ()=>{
+          try{
+            const data = JSON.parse(String(r.result||'').replace(/\b-?Infinity\b/g,'null').replace(/\bNaN\b/g,'null'));
+            window.METRICS = data; // triggers render
+          }catch(ex){ alert("Invalid metrics JSON: "+ex.message); }
+        };
+        r.readAsText(f);
+      });
+      document.body.appendChild(pick); pick.click();
+    });
+    status.appendChild(btn);
+  }
+
+  // Wire up to your Dashboard JSON flow
+  window.addEventListener('metrics-json-loaded', e=>{ if (e && e.detail) renderF1(e.detail); });
+  try{
+    var _m = window.METRICS;
+    Object.defineProperty(window, 'METRICS', { configurable:true, get(){ return _m; }, set(v){ _m=v; renderF1(v);} });
+    if (_m) renderF1(_m);
+  }catch(e){}
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    addInlineLoader();
+  });
+})();
+</script>
+<!-- ===== Metrics Bridge: route GET DATA-picked JSON to F1 panel ===== -->
+<style>
+  /* Hide local Pick JSON in the panel; we rely on the common GET DATA now */
+  #f1json #f1_pick { display: none !important; }
+</style>
+<script>
+(function(){
+  if (window.__METRICS_BRIDGE__) return; window.__METRICS_BRIDGE__ = true;
+
+  // 1) If GET DATA sets window.METRICS directly, react to it
+  try{
+    var _m = window.METRICS;
+    Object.defineProperty(window,'METRICS',{
+      configurable:true,
+      get(){ return _m; },
+      set(v){
+        _m = v;
+        try{
+          window.dispatchEvent(new CustomEvent('metrics-json-loaded',{ detail: v }));
+        }catch(e){}
+      }
+    });
+  }catch(e){}
+
+  // 2) If GET DATA calls applyMetricsAndSummary(metrics), intercept and forward
+  if (!window.__APPLY_METRICS_WRAP__){
+    window.__APPLY_METRICS_WRAP__ = true;
+    const orig = window.applyMetricsAndSummary;
+    window.applyMetricsAndSummary = function(m){
+      try{ if (typeof orig === 'function') orig(m); } finally {
+        try{ window.dispatchEvent(new CustomEvent('metrics-json-loaded',{ detail: m })); }catch(e){}
+        try{ window.METRICS = m; }catch(e){}
+      }
+    };
+  }
+
+  // 3) As a fallback, watch for file inputs used by GET DATA and parse JSON automatically
+  document.addEventListener('change', function(ev){
+    const el = ev.target;
+    if (!el || el.tagName !== 'INPUT' || el.type !== 'file') return;
+    if (!el.files || !el.files.length) return;
+    const f = el.files[0];
+    const looksJson = /\.json$/i.test(f.name) || (f.type && f.type.includes('json'));
+    if (!looksJson) return;
+    const r = new FileReader();
+    r.onload = function(){
+      try{
+        const text = String(r.result || '');
+        const metrics = JSON.parse(text.replace(/\b-?Infinity\b/g,'null').replace(/\bNaN\b/g,'null'));
+        window.METRICS = metrics; // triggers (1) and dispatches event
+      }catch(e){
+        console.warn('Metrics Bridge: invalid JSON from picker:', e);
+      }
+    };
+    r.readAsText(f);
+  }, true);
+})();
+</script>
+<!-- ===== /Metrics Bridge ===== -->
+<!-- ===== Hardcoded Alpha Vantage API key injector ===== -->
+<script>
+(function(){
+  const HARDCODED_KEY = "CSJ0Z7J69M0213II";
+  try {
+    // Persist for any legacy code paths that read from localStorage
+    localStorage.setItem('alphaVantageKey', HARDCODED_KEY);
+    localStorage.setItem('av_api_key', HARDCODED_KEY);
+  } catch (e) {}
+
+  function applyKey() {
+    ['#avKey', '#f1_key', '#f1sp_key'].forEach(sel => {
+      const el = document.querySelector(sel);
+      if (el) el.value = HARDCODED_KEY;
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyKey);
+  } else {
+    applyKey();
+  }
+})();
+</script>
+<!-- ===== /Hardcoded Alpha Vantage API key injector ===== -->
+<!-- ===== F1 Live â€” Table Only (Independent, JSON-fed) ===== -->
+<style>
+  #f1TableOnly{margin:26px 0 36px}
+  #f1TableOnly .hdr{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  #f1TableOnly .hdr h2{margin:0;font-weight:600}
+  #f1TableOnly .controls{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 14px}
+  #f1TableOnly .controls button{background:#1f2836;border:1px solid #394656;color:inherit;border-radius:8px;padding:8px 12px;cursor:pointer}
+  #f1TableOnly .status{opacity:.85}
+  #f1TableOnly .wrap{overflow-x:auto}
+  #f1TableOnly table{width:100%;border-collapse:collapse;font-size:13.5px}
+  #f1TableOnly th,#f1TableOnly td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.2);text-align:right}
+  #f1TableOnly th:first-child,#f1TableOnly td:first-child{text-align:left}
+  #f1TableOnly th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.9}
+  #f1TableOnly .pos{color:#22c55e} #f1TableOnly .neg{color:#ef4444}
+</style>
+<section id="f1TableOnly">
+<div class="hdr">
+<img class="f1-title-icon" src="Images/F1_front.png" alt="F1 Front" onerror="this.style.display='none'" />
+<h2>F1 Live</h2>
+<div class="status" id="f1to_status">Waiting for results</div>
+</div>
+<div class="controls">
+<button id="f1to_refresh" type="button">Start</button>
+</div>
+
+<div class="mini-pl-row">
+  <div class="mini-pl-card">
+    <div class="mini-pl-label">Unrealized P/L</div>
+    <div id="mini-unrealized-pl" class="mini-pl-value mini-pl-pos">+0.00</div>
+  </div>
+</div>
+<div class="wrap">
+<table id="f1to_tbl">
+<thead><tr><th>Ticker</th><th>Qty</th><th>Avg</th><th>Last</th><th>P/L</th><th>%</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+</section>
+
+<script>
+(function(){
+  function computeUnrealizedPL(){
+    try{
+      var table = document.getElementById('f1to_tbl');
+      var el = document.getElementById('mini-unrealized-pl');
+      if(!table || !el) return;
+      var headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim().toLowerCase());
+      var idx = headers.findIndex(h => h === 'p/l' || h.includes('p/l'));
+      var total = 0, found = false;
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        var td = tr.querySelectorAll('td')[idx];
+        if (td){
+          var raw = td.textContent.replace(/[$,+\s]/g,'');
+          var val = parseFloat(raw);
+          if (!isNaN(val)) { total += val; found = true; }
+        }
+      });
+      if(found){
+        var sign = total >= 0 ? '+' : '';
+        el.textContent = sign + total.toFixed(2);
+        el.classList.toggle('mini-pl-pos', total >= 0);
+        el.classList.toggle('mini-pl-neg', total < 0);
+      }
+    }catch(e){}
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', computeUnrealizedPL);
+  } else { computeUnrealizedPL(); }
+  var tbody = document.querySelector('#f1to_tbl tbody');
+  if (tbody){
+    new MutationObserver(computeUnrealizedPL).observe(tbody, {childList:true, subtree:true, characterData:true});
+  }
+  var btn = document.getElementById('f1to_refresh');
+  if (btn){ btn.addEventListener('click', function(){ setTimeout(computeUnrealizedPL, 400); }); }
+  window.computeUnrealizedPL = computeUnrealizedPL;
+})();
+</script>
+<script>
+(function(){
+  if (window.__F1_TABLE_ONLY__) return; window.__F1_TABLE_ONLY__=true;
+  const $=s=>document.querySelector(s);
+  const tbody=$('#f1to_tbl tbody'), status=$('#f1to_status'), btnRefresh=$('#f1to_refresh');
+  const fmt=(n,d=2)=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):'â€”';
+  const money=n=>Number.isFinite(+n)?((n<0?'-':'')+'$'+Math.abs(+n).toFixed(2)):'â€”';
+  const parseN=x=>{const n=parseFloat(x);return Number.isFinite(n)?n:NaN;};
+  function lastBiz(){ const d=new Date(); d.setDate(d.getDate()-1); while([0,6].includes(d.getDay())) d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
+
+  let POS=[], LASTS={};
+
+  function renderTable(){
+    if (!tbody) return;
+    tbody.innerHTML='';
+    if (!POS.length){ tbody.innerHTML='<tr><td colspan="6" style="opacity:.8">No open positions.</td></tr>'; return; }
+    POS.forEach(p=>{
+      const last = LASTS[p._priceKey];
+      const avg = Number(p.avgPrice)||0, qty=Number(p.qty)||0, mult=Number(p.multiplier)||1;
+      const pl = Number.isFinite(last)? (last-avg)*qty*mult : NaN;
+      const pct = (avg>0 && Number.isFinite(last))? ((last/avg)-1)*100 : NaN;
+      const tr=document.createElement('tr');
+      tr.innerHTML = `
+        <td>${p.symbol}</td>
+        <td>${fmt(qty,4)}</td>
+        <td>${fmt(avg,2)}</td>
+        <td class="last">${fmt(last,2)}</td>
+        <td class="pl ${Number(pl)>=0?'pos':'neg'}">${Number.isFinite(pl)?money(pl):'â€”'}</td>
+        <td class="${Number(pct)>=0?'pos':'neg'}">${Number.isFinite(pct)?pct.toFixed(2)+'%':'â€”'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function fetchStock(sym, key){
+    const u=`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ return NaN; }
+    const g=j && (j["Global Quote"]||j.globalQuote||j["global quote"]);
+    const price=parseN(g&& (g["05. price"]||g.price||g["05. Price"]));
+    const prev =parseN(g&& (g["08. previous close"]||g.previousClose));
+    return Number.isFinite(price)?price:(Number.isFinite(prev)?prev:NaN);
+  }
+  async function fetchOpt(occ,key,date){
+    try{
+      const u1=`https://www.alphavantage.co/query?function=OPTION_PRICE&symbol=${encodeURIComponent(occ)}&apikey=${encodeURIComponent(key)}`;
+      const r1=await fetch(u1); const t1=await r1.text(); let j1={}; try{ j1=JSON.parse(t1);}catch(e){}
+      const v=[j1.mark,j1.last,(j1.bid&&j1.ask?(+j1.bid+ +j1.ask)/2:null)].map(parseN).find(Number.isFinite);
+      if(Number.isFinite(v)) return v;
+    }catch(e){}
+    const root=occ.slice(0,-15);
+    const u=`https://www.alphavantage.co/query?function=HISTORICAL_OPTIONS&symbol=${encodeURIComponent(root)}&date=${lastBiz()}&apikey=${encodeURIComponent(key)}`;
+    const r=await fetch(u); const t=await r.text(); let j={}; try{ j=JSON.parse(t);}catch(e){ return NaN; }
+    const hit=((j&&j.data)||[]).find(c=>String(c.contractID).toUpperCase().replace(/\s/g,'')===occ);
+    if(!hit) return NaN;
+    const seq=[hit.mark,hit.last,(hit.bid&&hit.ask?(+hit.bid+ +hit.ask)/2:null)].map(parseN);
+    return seq.find(Number.isFinite);
+  }
+
+  async function refresh(){
+    const key = (localStorage.getItem('alphaVantageKey')||localStorage.getItem('av_api_key')||'').trim();
+    if (!key){ if(status) status.textContent='Enter API key first.'; return; }
+    if (status) status.textContent='Result';
+ 
+    // De-dupe
+    const groups=new Map();
+    POS.forEach(p=>{ const k=p.assetType+':'+(p.assetType==='option'?p.occId:p.quoteSymbol); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(p); });
+    let i=0;
+    for (const [k, arr] of groups){
+      i++; if(status) status.textContent=`Result ${i}/${groups.size}`;
+      const [kind,id]=k.split(':'); if(!id) continue;
+      let last = (kind==='option')? await fetchOpt(id,key) : await fetchStock(id,key);
+      arr.forEach(p=>{ LASTS[p._priceKey]=last; });
+      renderTable();
+      await new Promise(res=>setTimeout(res, 1100));
+    }
+    if (status) status.textContent='Completed.';
+  }
+
+  function applyJSON(m){
+    const src = (m&&m.F1&&Array.isArray(m.F1.openPositions)) ? m.F1.openPositions : (m&&m.openPositions||[]);
+    POS = src.map(x=>({
+      symbol: x.symbol,
+      assetType: x.assetType || (x.occId?'option':'stock'),
+      qty: +x.qty, avgPrice:+x.avgPrice, multiplier:+(x.multiplier||1),
+      quoteSymbol: x.quoteSymbol, underlyingTicker: x.underlyingTicker, occId: x.occId,
+      _priceKey: (x.assetType==='option') ? (x.occId||x.symbol) : (x.quoteSymbol||x.symbol)
+    }));
+    if (status) status.textContent = `No. of cars: ${POS.length}`;
+    LASTS = {}; // reset
+    renderTable();
+  }
+
+  // Wire up
+  if (btnRefresh) btnRefresh.addEventListener('click', refresh);
+  window.addEventListener('metrics-json-loaded', e=>{ if (e && e.detail) applyJSON(e.detail); });
+  try{
+    var _m = window.METRICS;
+    Object.defineProperty(window,'METRICS',{configurable:true,get(){return _m;},set(v){_m=v; applyJSON(v);}});
+    if (_m) applyJSON(_m);
+  }catch(e){}
+
+  // initial
+  renderTable();
+})();
+</script>
+<!-- ===== /F1 Live â€” Table Only ===== -->
+<!-- Mount the F1 Table Only panel under #telemetry-page and ensure singleton -->
+<script>
+(function(){
+  if (window.__F1_TABLE_MOUNTED__) return; window.__F1_TABLE_MOUNTED__=true;
+  function mount(){
+    var pane = document.querySelector('#telemetry-page');
+    var panel = document.querySelector('#f1TableOnly');
+    if (!panel) return;
+    // Remove any duplicates
+    document.querySelectorAll('#f1TableOnly').forEach((n,i)=>{ if (i>0 && n.parentNode) n.parentNode.removeChild(n); });
+    if (pane){
+      // If panel not already a child of telemetry-page, move it there
+      if (panel.parentNode !== pane){
+        panel.parentNode && panel.parentNode.removeChild(panel);
+        pane.appendChild(panel);
+      }
+    }
+    // As a safety, remove any accidental clones in #podium-page
+    var podium = document.querySelector('#podium-page');
+    if (podium){
+      podium.querySelectorAll('#f1TableOnly').forEach(n=>{ n.parentNode && n.parentNode.removeChild(n); });
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+})();
+</script>
+<style>
+/* Override: make panel 95% of page width */
+#f1TableOnly{
+  width: 95% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+</style>
+<!-- ===== F1 Live â€” Mini Charts (TradingView Mini Symbol Overview) ===== -->
+<style>
+  #f1Minis{ width:95%; margin: 10px auto 40px; }
+  #f1Minis .hdr{display:flex;align-items:center;gap:12px;margin:6px 0 12px}
+  #f1Minis .hdr h3{margin:0;font-weight:600}
+  #f1Minis .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  #f1Minis .mini.tradingview-widget-container{height:170px;border:1px solid rgba(255,255,255,.18);border-radius:12px;overflow:hidden;padding:4px;background:rgba(255,255,255,.02)}
+  #f1Minis .tradingview-widget-container__widget{height:100%!important}
+</style>
+<section id="f1Minis">
+<div class="hdr"><h3>F1 Live Charts</h3><div id="f1Minis_status" style="opacity:.8;margin-left:8px"></div></div>
+<div class="grid" id="f1Minis_grid"></div>
+</section>
+<script>
+(function(){
+  if (window.__F1_MINIS_EMBED__) return; window.__F1_MINIS_EMBED__=true;
+  const gridId = "f1Minis_grid";
+  const statusId = "f1Minis_status";
+  function $(s){ return document.querySelector(s); }
+  function status(t){ var el=$('#'+statusId); if (el) el.textContent=t||''; }
+  function toTVSymbol(raw){
+    if (!raw) return '';
+    if (String(raw).includes(':')) return raw;
+    const MAP = { PLTR:'BATS:PLTR', DECK:'NYSE:DECK', TSLA:'NASDAQ:TSLA', META:'NASDAQ:META', BIDU:'NASDAQ:BIDU', TQQQ:'NASDAQ:TQQQ', SQQQ:'NASDAQ:SQQQ', AAPL:'NASDAQ:AAPL', SOXL:'AMEX:SOXL', V:'NYSE:V', MSFT:'NASDAQ:MSFT', SPX:'SP:SPX', SPXW:'SP:SPX', NDX:'NASDAQ:NDX', RUT:'INDEX:RUT' };
+    const t = String(raw).toUpperCase().trim();
+    return MAP[t] || `NASDAQ:${t}`;
+  }
+  function addMini(container, tvSymbol){
+    if (!container || !tvSymbol) return;
+    // Create container block
+    const wrap = document.createElement('div');
+    wrap.className = 'mini tradingview-widget-container';
+    const widget = document.createElement('div');
+    widget.className = 'tradingview-widget-container__widget';
+    wrap.appendChild(widget);
+    const copy = document.createElement('div');
+    copy.className = 'tradingview-widget-copyright';
+    const clean = String(tvSymbol).split(':').pop();
+    copy.innerHTML = '<a href="https://www.tradingview.com/symbols/'+encodeURIComponent(clean)+'/\" rel="noopener nofollow" target="_blank"><span class="blue-text">'+clean+' stock price</span></a><span class="trademark"> by TradingView</span>';
+    wrap.appendChild(copy);
+    container.appendChild(wrap);
+    // Embed config script
+    const s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.async = true;
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
+    s.text = JSON.stringify({
+      symbol: tvSymbol,
+      chartOnly: false,
+      dateRange: "12M",
+      trendLineColor: "rgba(0, 188, 212, 1)",
+      noTimeScale: true,
+      colorTheme: "dark",
+      isTransparent: true,
+      locale: "en",
+      width: "100%",
+      autosize: false,
+      height: "100%"
+    });
+    wrap.appendChild(s);
+  }
+  function renderMinis(metrics){
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+    grid.innerHTML='';
+    const pos = (metrics && metrics.F1 && Array.isArray(metrics.F1.openPositions)) ? metrics.F1.openPositions : (metrics && metrics.openPositions || []);
+    if (!pos.length){ status('No open positions in JSON.'); return; }
+    status('Rendering '+pos.length+' minisâ€¦');
+    pos.forEach(row=>{
+      const tv = row.tvSymbol || toTVSymbol(row.underlyingTicker || row.quoteSymbol || '');
+      if (tv) addMini(grid, tv);
+    });
+    status('');
+  }
+  // Listen to the same GET DATA flow
+  window.addEventListener('metrics-json-loaded', e=>{ if (e && e.detail) renderMinis(e.detail); });
+  try{
+    var _m = window.METRICS;
+    Object.defineProperty(window,'METRICS',{configurable:true,get(){return _m;},set(v){_m=v; renderMinis(v);}});
+    if (_m) renderMinis(_m);
+  }catch(e){}
+})();
+</script>
+<!-- ===== /F1 Live â€” Mini Charts ===== -->
+<!-- Scope F1 Mini Charts to Telemetry only + singleton guard -->
+<script>
+(function(){
+  if (window.__F1_MINIS_TELEMETRY_ONLY__) return;
+  window.__F1_MINIS_TELEMETRY_ONLY__ = true;
+
+  function mountMinisOnce(){
+    try{
+      // Remove duplicates anywhere except the first
+      var all = document.querySelectorAll('#f1Minis');
+      if (all.length > 1){
+        for (var i=1;i<all.length;i++){ all[i].parentNode && all[i].parentNode.removeChild(all[i]); }
+      }
+      var minis = document.querySelector('#f1Minis');
+      if (!minis) return;
+
+      // Ensure minis lives under Telemetry only
+      var telemetry = document.querySelector('#telemetry-page');
+      if (telemetry && minis.parentNode !== telemetry){
+        minis.parentNode && minis.parentNode.removeChild(minis);
+        telemetry.appendChild(minis);
+      }
+
+      // Remove any stray minis under Podium
+      var podium = document.querySelector('#podium-page');
+      if (podium){
+        podium.querySelectorAll('#f1Minis').forEach(function(n){
+          if (n !== minis) n.parentNode && n.parentNode.removeChild(n);
+        });
+      }
+    }catch(e){ console.warn('Mini scope fix:', e); }
+  }
+
+  // Run on DOM ready and after metrics load (in case panel is injected late)
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', mountMinisOnce);
+  } else {
+    mountMinisOnce();
+  }
+  window.addEventListener('metrics-json-loaded', mountMinisOnce);
+})();
+</script>
+<footer class="footer-info">F1 Theme Portfolio Dashboard - Real-time trading analytics with professional-grade performance metrics</footer>
+<script id="fixed-header-offset">
+(function(){
+  function applyHeaderOffset(){
+    var header = document.querySelector('.dashboard-header');
+    if(!header) return;
+    var h = header.getBoundingClientRect().height;
+    // Apply padding to body to prevent content overlap with fixed header
+    document.body.style.paddingTop = h + 'px';
+  }
+  // Run on DOM ready and on resize (and on font load)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyHeaderOffset);
+  } else {
+    applyHeaderOffset();
+  }
+  window.addEventListener('resize', applyHeaderOffset);
+  // If Google Fonts affect height after load, adjust again
+  window.addEventListener('load', applyHeaderOffset);
+})();
+</script>
+
+
+<!-- Telemetry: hard gate until metrics are updated -->
+<script>
+(function(){
+  // Placeholder ASAP
+  try {
+    var titleEl = document.querySelector('.telemetry-title');
+    var msgEl   = document.getElementById('telemetry-live-message');
+    if (titleEl) titleEl.textContent = 'Telemetry Alert';
+    if (msgEl)   msgEl.textContent   = 'No live feed…';
+  } catch(e){}
+
+  // Gate flag
+  window.__telemetryReady = false;
+
+  // Keep references if functions exist
+  var _origProcess = null;
+  var _origPlay    = null;
+
+  function ensureProxies(){
+    if (!_origProcess && typeof window.processTelemetryQueue === 'function'){
+      _origProcess = window.processTelemetryQueue;
+      window.processTelemetryQueue = function(){
+        if (!window.__telemetryReady) { return; }
+        return _origProcess.apply(this, arguments);
+      };
+    }
+    if (!_origPlay && typeof window.playTelemetryAudioOnce === 'function'){
+      _origPlay = window.playTelemetryAudioOnce;
+      window.playTelemetryAudioOnce = function(){
+        if (!window.__telemetryReady) { return; }
+        return _origPlay.apply(this, arguments);
+      };
+    }
+  }
+
+  // Try now and keep checking for late-bound functions
+  ensureProxies();
+  var proxyTimer = setInterval(function(){
+    ensureProxies();
+    // Stop checking after 20s
+    if ((window.__telemetryReady === true) || (typeof document === 'object' && document.visibilityState === 'hidden')) {
+      clearInterval(proxyTimer);
+    }
+  }, 500);
+
+  function num(v){
+    if (v === null || v === undefined) return null;
+    var n = parseFloat(String(v).replace(/[, ]+/g,''));
+    return isNaN(n) ? null : n;
+  }
+
+  function attachWrapper(){
+    if (!window.updateDashboardMetrics || window.__telemetryWrapped__) return;
+    window.__telemetryWrapped__ = true;
+    var __origUpdate = window.updateDashboardMetrics;
+
+    window.updateDashboardMetrics = function(metricsForDashboard){
+      var result = __origUpdate.apply(this, arguments);
+      try {
+        // Only now mark telemetry as ready
+        window.__telemetryReady = true;
+
+        // Clear any pre-existing intervals/queues set by earlier scripts
+        try {
+          if (window.telemetryInterval) { clearInterval(window.telemetryInterval); window.telemetryInterval = null; }
+        } catch(e){}
+        window.telemetryQueue = [];
+
+        // Build queue by conditions
+        var m = metricsForDashboard || (window.latestMetrics || {});
+        var q = [];
+        var cagr = num(m.CAGR);
+        var mdd  = num(m.MaxDrawdown);
+        var shrp = num(m.Sharpe);
+        var drs  = (m.DRS != null ? num(m.DRS) : (m.ProfitFactor != null ? num(m.ProfitFactor) : null));
+
+        if (cagr != null && cagr < 0.12) {
+          q.push({ title: 'CAGR ALERT!', message: 'We’re seeing slower pace in your CAGR, keep pushing!', audioId: 'cagr-audio' });
+        }
+        if (shrp != null && shrp < 1.0) {
+          q.push({ title: 'SHARPE RATIO ALERT!', message: 'On this sector, your throttle application is inconsistent. Try a smoother approach to carry more momentum.', audioId: 'sharpe-audio' });
+        }
+        if (drs != null && drs < 1) {
+          q.push({ title: 'DRS ALERT!', message: 'DRS enabled. Gap is eight tenths. You should see the speed differential in a moment.', audioId: 'pf-audio' });
+        }
+        if (mdd != null && mdd > 0.30) {
+          q.push({ title: 'MAX DRAWDOWN ALERT!', message: 'We have a slight issue for the front-left wheel nut. Need to be careful with it, driver.', audioId: 'mdd-audio' });
+        }
+
+        if (q.length > 0){
+          window.telemetryQueue = q;
+          // Now proxies will allow through
+          if (typeof window.processTelemetryQueue === 'function') window.processTelemetryQueue();
+          if (typeof window.playTelemetryAudioOnce === 'function') window.playTelemetryAudioOnce(q);
+        } else {
+          // Keep placeholder if no alerts
+          var titleEl = document.querySelector('.telemetry-title');
+          var msgEl   = document.getElementById('telemetry-live-message');
+          if (titleEl) titleEl.textContent = '—';
+          if (msgEl)   msgEl.textContent   = '—';
+        }
+      } catch(e){
+        console.warn('Telemetry hard gate wiring failed', e);
+      }
+      return result;
+    };
+  }
+
+  // Attach wrapper now or when available
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachWrapper);
+  } else { attachWrapper(); }
+
+  var tries = 0;
+  var waitUpd = setInterval(function(){
+    if (window.updateDashboardMetrics){
+      clearInterval(waitUpd);
+      attachWrapper();
+    }
+    if (++tries > 40) clearInterval(waitUpd);
+  }, 500);
+})();
+</script>
+<!-- UNIVERSAL_CAR_OR_STRATEGY_OVERLAY_START -->
+<script>
+(function(){
+  const CAR_IMG_BASES = ['Images/', 'file:///C:/Temp/Dashboard/Images/'];
+  const CAR_IMG_MAP = {
+    'Bear Call Spread': 'Bear Call Spread.png',
+    'Bull Put Spread': 'Bull Put Spread.png',
+    'Iron Condor': 'Iron Condor.png',
+    'Long Call': 'Long Call.png',
+    'Short Call': 'Short Call.png',
+    'Short Put': 'Short Put.png',
+    'Short Strangle': 'Short Strangle.png',
+    'Long Combo': 'Long Combo.png',
+    'Momentum Investing': 'Momentum Investing.png',
+    'Assignment': 'Assignment.png'
+  };
+
+  function textOf(el){ return (el && (el.textContent||'') || '').replace(/\s+/g,' ').trim(); }
+  function cleanName(s){
+    if (!s) return '';
+    s = s.replace(/\u2026/g,'');            // remove ellipsis char
+    s = s.split('—')[0].split(' - ')[0];    // strip suffix after em-dash/hyphen
+    return s.trim();
+  }
+  function findColIndex(table){
+    const hdr = table.querySelector('.table-header');
+    if (!hdr) return -1;
+    const cells = Array.from(hdr.children).map(textOf);
+    let i = cells.findIndex(v => /^car$/i.test(v));
+    if (i >= 0) return i;
+    // Strategy uploads often label this column "STRATEGY" (or "CAR/STRATEGY", "DRIVER/TEAM")
+    i = cells.findIndex(v => /^(strategy|car\/?strategy|driver\/?team)$/i.test(v));
+    return i;
+  }
+  function applyOverlay(cell, name){
+    if (!name || cell.__carApplied) return;
+
+    const wrap = document.createElement('span');
+    wrap.className = 'car-cell';
+    wrap.style.position = 'relative';
+
+    const img = document.createElement('img');
+    img.className = 'car-img';
+    img.alt = name;
+    img.style.display = 'block';
+    img.style.width = '220px';
+    img.style.height = 'auto';
+    img.style.objectFit = 'contain';
+    img.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,.35))';
+
+    const label = document.createElement('span');
+    label.className = 'car-name';
+    label.textContent = name;
+    // One-line & 16px downward
+    label.style.whiteSpace = 'nowrap';
+    label.style.overflow = 'hidden';
+    label.style.textOverflow = 'ellipsis';
+    label.style.position = 'absolute';
+    label.style.left = '50%';
+    label.style.bottom = '0';
+    label.style.transform = 'translate(-50%, 16px)';
+    label.style.padding = '4px 8px';
+    label.style.color = '#fff';
+    label.style.fontSize = '14px';
+    label.style.lineHeight = '1.15';
+    label.style.textAlign = 'center';
+    label.style.pointerEvents = 'none';
+    label.style.textShadow = '0 1px 2px rgba(0,0,0,.65)';
+    label.style.maxWidth = '96%';
+    label.style.borderRadius = '8px';
+    label.style.background = 'linear-gradient(180deg, rgba(0,0,0,0.20), rgba(0,0,0,0.65))';
+
+    const file = CAR_IMG_MAP[name];
+    if (file){
+      let baseIdx = 0;
+      const tryNext = () => {
+        if (baseIdx >= CAR_IMG_BASES.length){ img.style.display = 'none'; return; }
+        img.src = CAR_IMG_BASES[baseIdx++] + file;
+      };
+      img.onerror = tryNext;
+      tryNext();
+    } else {
+      img.style.display = 'none';
+    }
+
+    while (cell.firstChild) cell.removeChild(cell.firstChild);
+    wrap.appendChild(img);
+    wrap.appendChild(label);
+    cell.appendChild(wrap);
+    cell.__carApplied = true;
+  }
+
+  function rebuild(){
+    const table = document.getElementById('standings-table');
+    if (!table) return;
+    const idx = findColIndex(table);
+    if (idx < 0) return;
+
+    table.querySelectorAll('.table-row').forEach(row => {
+      const cells = Array.from(row.children);
+      const cell = cells[idx];
+      if (!cell) return;
+      const raw = textOf(cell);
+      const name = cleanName(raw);
+      applyOverlay(cell, name);
+    });
+  }
+
+  function boot(){ rebuild(); setTimeout(rebuild, 200); setTimeout(rebuild, 600); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  new MutationObserver(rebuild).observe(document.body, { childList:true, subtree:true });
+})();
+</script>
+<!-- UNIVERSAL_CAR_OR_STRATEGY_OVERLAY_END -->
+
+</body>
 </html>
+<script>
+// Override robustParseJson to handle files starting with HTML comments.
+(function(){
+  window.robustParseJson = function(text){
+    var t = (text || "").trim();
+    // Strip BOM
+    if (t.charCodeAt(0) === 0xFEFF) t = t.slice(1);
+    // Strip HTML comments <!-- ... -->
+    t = t.replace(/<!--[\s\S]*?-->/g, "");
+    // Strip /* */ block comments
+    t = t.replace(/\/\*[\s\S]*?\*\//g, "");
+    // Strip // line comments
+    t = t.split(/\r?\n/).map(function(line){ return line.replace(/^\s*\/\/.*$/, ""); }).join("\n");
+    // After stripping comments, if it still looks like HTML, bail
+    var trimmed = t.trim();
+    if (trimmed.startsWith("<")) {
+      throw new Error("The selected file still looks like HTML after removing comments. Please choose a JSON file.");
+    }
+    return JSON.parse(trimmed);
+  };
+})();
+</script>
